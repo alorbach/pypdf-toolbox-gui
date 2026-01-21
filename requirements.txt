@@ -2,13 +2,14 @@
 # Core PDF processing libraries
 PyPDF2>=3.0.0
 pypdf>=4.0.0
-pymupdf>=1.23.0  # For PDF thumbnail generation (no external dependencies)
+pymupdf>=1.23.0  # For PDF thumbnail generation and text extraction (no external dependencies)
 pdf2image>=1.16.0  # Alternative for thumbnails (requires poppler)
 reportlab>=4.0.0
 
 # OCR support
 pytesseract>=0.3.10
 pillow>=10.0.0
+ocrmypdf>=16.0.0  # For OCR-based text extraction from scanned PDFs
 
 # GUI framework
 # tkinter is included with Python standard library
@@ -17,8 +18,12 @@ tkinterdnd2>=0.3.0  # Drag and drop support
 # Configuration
 pyyaml>=6.0.0  # YAML configuration files
 
+# HTTP requests (for Azure API calls)
+requests>=2.31.0
+
 # Azure AI (optional - for AI-powered tools)
 openai>=1.0.0  # Azure OpenAI client
+azure-identity>=1.15.0  # Azure Entra ID authentication (optional)
 
 # Additional utilities
 tqdm>=4.65.0

@@ -1,0 +1,8 @@
+# Screenshots folder for PDF Text Extractor
+#
+# Expected screenshots:
+# - 01-main-window.png - Main interface
+# - 02-drag-drop.png - Drag and drop zone
+# - 03-file-processing.png - File being processed
+# - 04-results.png - Extraction results
+# - 05-azure-config.png - Azure configuration dialog

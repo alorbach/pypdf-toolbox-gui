@@ -12,12 +12,16 @@ A collection of Python-based PDF utility tools with a unified graphical launcher
 
 ## Available Tools
 
-Tools will be added to this project over time. Current planned tools include:
+### Implemented Tools
+
+- **Manual Splitter** (`launch_manual_splitter`): Manually split PDFs by selecting split points with visual thumbnail preview
+- **Text Extractor** (`launch_text_extractor`): Extract text from PDFs using Python (PyMuPDF), OCR (OCRmyPDF), or Azure AI Document Intelligence. Supports Text, Markdown, and JSON output formats
+
+### Planned Tools
 
 - **Split PDF**: Split a PDF into individual pages or page ranges
 - **Merge PDF**: Combine multiple PDFs into one document
 - **Reorder Pages**: Rearrange pages within a PDF
-- **OCR**: Perform optical character recognition on scanned PDFs
 - **Compress**: Reduce PDF file size
 - **Rotate**: Rotate pages within a PDF
 - **Extract Pages**: Extract specific pages from a PDF

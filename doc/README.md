@@ -8,6 +8,7 @@ This folder contains documentation for all utilities in the PyPDF Toolbox.
 |------|-------------|---------------|
 | Launcher | Main launcher GUI - slim top-bar interface | [launcher/](launcher/) |
 | Manual Splitter | Manually split PDFs by selecting page ranges | [manual-splitter/](manual-splitter/) |
+| Text Extractor | Extract text from PDFs using Python, OCR, or Azure AI | [text-extractor/](text-extractor/) |
 
 ## Adding Screenshots
 
