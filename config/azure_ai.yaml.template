@@ -1,0 +1,44 @@
+# Azure AI Configuration Template
+# Copy this file to azure_ai.yaml and fill in your credentials
+#
+# IMPORTANT: Never commit azure_ai.yaml with actual API keys!
+# For security, prefer using environment variables instead.
+
+azure_openai:
+  # Azure OpenAI endpoint URL (e.g., https://your-resource.openai.azure.com/)
+  endpoint: ""
+  
+  # API key - leave empty to use AZURE_OPENAI_API_KEY environment variable
+  api_key: ""
+  
+  # API version
+  api_version: "2024-02-15-preview"
+  
+  # Deployment name for your model (e.g., gpt-4, gpt-35-turbo)
+  deployment_name: "gpt-4"
+
+azure_document_intelligence:
+  # Azure Document Intelligence endpoint (formerly Form Recognizer)
+  # e.g., https://your-resource.cognitiveservices.azure.com/
+  endpoint: ""
+  
+  # API key - leave empty to use AZURE_DOC_INTEL_API_KEY environment variable
+  api_key: ""
+
+settings:
+  # If true, environment variables take precedence over values in this file
+  prefer_env_vars: true
+  
+  # Timeout for API calls in seconds
+  timeout: 60
+  
+  # Maximum retries for failed API calls
+  max_retries: 3
+
+# Environment Variables Reference:
+# ---------------------------------
+# AZURE_OPENAI_ENDPOINT     - Azure OpenAI endpoint URL
+# AZURE_OPENAI_API_KEY      - Azure OpenAI API key
+# AZURE_OPENAI_DEPLOYMENT   - Azure OpenAI deployment name
+# AZURE_DOC_INTEL_ENDPOINT  - Azure Document Intelligence endpoint
+# AZURE_DOC_INTEL_API_KEY   - Azure Document Intelligence API key
