@@ -51,8 +51,355 @@ Tools should use these to position themselves in the screen area below the launc
 ### GUI Framework
 
 - Use **tkinter** with **ttk** widgets for all GUI components
-- Apply modern styling using ttk themes (prefer 'clam' theme when available)
+- Apply modern styling using the UIColors, UIFonts, and UISpacing classes
 - Use consistent fonts: "Segoe UI" on Windows, system default on other platforms
+
+## Modern UI Design Guidelines
+
+All tools in this project MUST follow these modern UI/UX best practices for a consistent, professional appearance.
+
+### Color System (UIColors Class)
+
+Use the predefined color palette in `UIColors` class for consistency:
+
+```python
+class UIColors:
+    """Modern color palette for consistent UI styling."""
+    # Primary colors (Blue)
+    PRIMARY = "#2563eb"          # Main actions, links, active states
+    PRIMARY_HOVER = "#1d4ed8"    # Hover state for primary
+    PRIMARY_LIGHT = "#dbeafe"    # Backgrounds, badges
+    
+    # Secondary (Slate gray)
+    SECONDARY = "#64748b"
+    SECONDARY_HOVER = "#475569"
+    
+    # Status colors
+    SUCCESS = "#16a34a"          # Green - success actions, confirmations
+    SUCCESS_LIGHT = "#dcfce7"
+    SUCCESS_HOVER = "#15803d"
+    ERROR = "#dc2626"            # Red - errors, destructive actions
+    ERROR_LIGHT = "#fee2e2"
+    ERROR_HOVER = "#b91c1c"
+    WARNING = "#f59e0b"          # Amber - warnings
+    WARNING_LIGHT = "#fef3c7"
+    
+    # Neutral backgrounds
+    BG_PRIMARY = "#ffffff"       # White - cards, dialogs
+    BG_SECONDARY = "#f8fafc"     # Slate 50 - page background
+    BG_TERTIARY = "#f1f5f9"      # Slate 100 - subtle sections
+    
+    # Borders and text
+    BORDER = "#e2e8f0"           # Light border
+    BORDER_DARK = "#cbd5e1"      # Emphasized border
+    TEXT_PRIMARY = "#1e293b"     # Main text
+    TEXT_SECONDARY = "#64748b"   # Secondary text
+    TEXT_MUTED = "#94a3b8"       # Disabled/placeholder text
+    
+    # Special purpose
+    SPLIT_ACTIVE = "#ef4444"     # Red for active split points
+    THUMBNAIL_BG = "#ffffff"
+    THUMBNAIL_HOVER = "#dbeafe"  # Blue highlight on hover
+    
+    # Drop zone
+    DROP_ZONE_BG = "#f8fafc"
+    DROP_ZONE_BORDER = "#94a3b8"
+    DROP_ZONE_ACTIVE = "#dbeafe"
+    DROP_ZONE_BORDER_ACTIVE = "#2563eb"
+```
+
+### Typography (UIFonts Class)
+
+Use consistent fonts throughout the application:
+
+```python
+class UIFonts:
+    """Font configurations for consistent typography."""
+    TITLE = ("Segoe UI", 18, "bold")      # Main window titles
+    SUBTITLE = ("Segoe UI", 14, "bold")   # Section titles
+    HEADING = ("Segoe UI", 12, "bold")    # Card headers, labels
+    BODY = ("Segoe UI", 10)               # Regular text
+    BODY_BOLD = ("Segoe UI", 10, "bold")  # Emphasized body text
+    SMALL = ("Segoe UI", 9)               # Secondary info, hints
+    SMALL_BOLD = ("Segoe UI", 9, "bold")  # Small labels
+    MONO = ("Consolas", 9)                # Code, file paths, logs
+    BUTTON = ("Segoe UI", 10, "bold")     # Button text
+    BUTTON_SMALL = ("Segoe UI", 9)        # Small buttons
+```
+
+### Spacing System (UISpacing Class)
+
+Use consistent spacing values:
+
+```python
+class UISpacing:
+    """Consistent spacing values."""
+    XS = 2    # Tight spacing (between related elements)
+    SM = 5    # Small spacing (padding, small gaps)
+    MD = 10   # Medium spacing (standard padding)
+    LG = 15   # Large spacing (section gaps)
+    XL = 20   # Extra large (major sections)
+    XXL = 30  # Maximum spacing
+```
+
+### Button Styling
+
+Create modern flat buttons with hover effects:
+
+```python
+def create_rounded_button(parent, text, command, style="primary", width=None):
+    """Create a styled button with hover effect.
+    
+    Styles: primary, secondary, success, danger, ghost
+    """
+    colors = {
+        "primary": (UIColors.PRIMARY, UIColors.PRIMARY_HOVER, "#ffffff"),
+        "secondary": (UIColors.BG_TERTIARY, UIColors.BORDER, UIColors.TEXT_PRIMARY),
+        "success": (UIColors.SUCCESS, UIColors.SUCCESS_HOVER, "#ffffff"),
+        "danger": (UIColors.ERROR, UIColors.ERROR_HOVER, "#ffffff"),
+        "ghost": (UIColors.BG_PRIMARY, UIColors.BG_TERTIARY, UIColors.TEXT_PRIMARY),
+    }
+    
+    bg, hover_bg, fg = colors.get(style, colors["primary"])
+    
+    btn = tk.Button(
+        parent,
+        text=text,
+        command=command,
+        font=UIFonts.BUTTON,
+        bg=bg,
+        fg=fg,
+        activebackground=hover_bg,
+        activeforeground=fg,
+        relief="flat",
+        cursor="hand2",
+        padx=UISpacing.MD,
+        pady=UISpacing.SM,
+        bd=0,
+        highlightthickness=0,
+    )
+    
+    if width:
+        btn.config(width=width)
+    
+    # Hover effects
+    def on_enter(e):
+        btn.config(bg=hover_bg)
+    def on_leave(e):
+        btn.config(bg=bg)
+    
+    btn.bind("<Enter>", on_enter)
+    btn.bind("<Leave>", on_leave)
+    
+    return btn
+```
+
+### Card/Panel Design
+
+Create card-like frames with proper borders:
+
+```python
+def create_card_frame(parent, title=None):
+    """Create a card-like frame with optional title."""
+    if title:
+        frame = tk.LabelFrame(
+            parent,
+            text=f"  {title}  ",  # Add spacing around title
+            font=UIFonts.HEADING,
+            bg=UIColors.BG_PRIMARY,
+            fg=UIColors.TEXT_PRIMARY,
+            bd=1,
+            relief="solid",
+            padx=UISpacing.MD,
+            pady=UISpacing.SM,
+        )
+    else:
+        frame = tk.Frame(
+            parent,
+            bg=UIColors.BG_PRIMARY,
+            bd=1,
+            relief="solid",
+        )
+    return frame
+```
+
+### Header Design Pattern
+
+Every tool should have a consistent header:
+
+```python
+def create_header(parent, title, subtitle=None):
+    """Create a styled header section."""
+    header_frame = tk.Frame(parent, bg=UIColors.BG_PRIMARY, pady=UISpacing.MD)
+    header_frame.grid(row=0, column=0, sticky="ew")
+    header_frame.grid_columnconfigure(0, weight=1)
+    
+    # Title with icon
+    title_label = tk.Label(
+        header_frame,
+        text=f"✂️  {title}",  # Add relevant emoji
+        font=UIFonts.TITLE,
+        bg=UIColors.BG_PRIMARY,
+        fg=UIColors.PRIMARY
+    )
+    title_label.grid(row=0, column=0, pady=(UISpacing.SM, 0))
+    
+    if subtitle:
+        subtitle_label = tk.Label(
+            header_frame,
+            text=subtitle,
+            font=UIFonts.BODY,
+            bg=UIColors.BG_PRIMARY,
+            fg=UIColors.TEXT_SECONDARY
+        )
+        subtitle_label.grid(row=1, column=0, pady=(0, UISpacing.SM))
+    
+    return header_frame
+```
+
+### Drop Zone Design
+
+Modern drop zone with visual feedback:
+
+```python
+def create_drop_zone(parent):
+    """Create a modern drop zone."""
+    drop_frame = tk.Frame(
+        parent,
+        bg=UIColors.DROP_ZONE_BG,
+        highlightbackground=UIColors.DROP_ZONE_BORDER,
+        highlightthickness=2,
+        padx=UISpacing.XL,
+        pady=UISpacing.XL
+    )
+    
+    # Large icon
+    icon_label = tk.Label(
+        drop_frame,
+        text="📄",
+        font=("Segoe UI", 32),
+        bg=UIColors.DROP_ZONE_BG
+    )
+    icon_label.pack(pady=(UISpacing.SM, UISpacing.XS))
+    
+    # Main text
+    main_label = tk.Label(
+        drop_frame,
+        text="Drag and drop PDF file here",
+        font=UIFonts.SUBTITLE,
+        bg=UIColors.DROP_ZONE_BG,
+        fg=UIColors.TEXT_PRIMARY,
+        cursor="hand2"
+    )
+    main_label.pack()
+    
+    # Sub text
+    sub_label = tk.Label(
+        drop_frame,
+        text="or click to browse",
+        font=UIFonts.SMALL,
+        bg=UIColors.DROP_ZONE_BG,
+        fg=UIColors.TEXT_MUTED
+    )
+    sub_label.pack(pady=(UISpacing.XS, UISpacing.SM))
+    
+    return drop_frame
+```
+
+### Interactive Elements
+
+Add hover effects to interactive elements:
+
+```python
+def add_hover_effect(widget, normal_bg, hover_bg):
+    """Add hover effect to a widget."""
+    def on_enter(e):
+        widget.config(bg=hover_bg)
+        # Also update child labels
+        for child in widget.winfo_children():
+            if isinstance(child, tk.Label):
+                child.config(bg=hover_bg)
+    
+    def on_leave(e):
+        widget.config(bg=normal_bg)
+        for child in widget.winfo_children():
+            if isinstance(child, tk.Label):
+                child.config(bg=normal_bg)
+    
+    widget.bind("<Enter>", on_enter)
+    widget.bind("<Leave>", on_leave)
+```
+
+### Status Indicators
+
+Use badges for status information:
+
+```python
+def create_status_badge(parent, text, status="info"):
+    """Create a colored status badge.
+    
+    Status: info, success, warning, error
+    """
+    colors = {
+        "info": (UIColors.PRIMARY_LIGHT, UIColors.PRIMARY),
+        "success": (UIColors.SUCCESS_LIGHT, UIColors.SUCCESS),
+        "warning": (UIColors.WARNING_LIGHT, UIColors.TEXT_PRIMARY),
+        "error": (UIColors.ERROR_LIGHT, UIColors.ERROR),
+    }
+    
+    bg, fg = colors.get(status, colors["info"])
+    
+    badge = tk.Label(
+        parent,
+        text=f" {text} ",
+        font=UIFonts.SMALL_BOLD,
+        bg=bg,
+        fg=fg,
+        padx=UISpacing.SM,
+        pady=UISpacing.XS
+    )
+    return badge
+```
+
+### Window/Dialog Design
+
+Modal dialogs should be on top of parent:
+
+```python
+def create_modal_dialog(parent, title, width=500, height=400):
+    """Create a modal dialog window."""
+    dialog = tk.Toplevel(parent)
+    dialog.title(title)
+    dialog.geometry(f"{width}x{height}")
+    dialog.configure(bg=UIColors.BG_SECONDARY)
+    
+    # Make modal and on top
+    dialog.transient(parent)
+    dialog.grab_set()
+    dialog.lift()
+    dialog.focus_force()
+    
+    # Center on parent
+    dialog.update_idletasks()
+    x = parent.winfo_x() + (parent.winfo_width() - width) // 2
+    y = parent.winfo_y() + (parent.winfo_height() - height) // 2
+    dialog.geometry(f"+{x}+{y}")
+    
+    return dialog
+```
+
+### UI Best Practices Summary
+
+1. **Consistent Colors**: Always use `UIColors` constants, never hardcode colors
+2. **Proper Spacing**: Use `UISpacing` constants for all padding/margins
+3. **Typography Hierarchy**: Use appropriate font sizes (Title > Subtitle > Heading > Body > Small)
+4. **Interactive Feedback**: Add hover effects to all clickable elements
+5. **Visual Grouping**: Use cards/panels to group related content
+6. **Status Communication**: Use color-coded badges and icons for status
+7. **Flat Design**: Use `relief="flat"` for buttons, subtle borders for containers
+8. **Cursor Feedback**: Set `cursor="hand2"` for clickable elements
+9. **Modal Dialogs**: Always make dialogs modal with `transient()` and `grab_set()`
+10. **Icons/Emojis**: Use emojis sparingly for visual cues (📄, ✂️, ✓, ⚠️)
 
 ### File Structure
 
