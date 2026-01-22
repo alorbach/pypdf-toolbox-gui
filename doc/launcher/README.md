@@ -5,9 +5,11 @@ The Launcher is a slim top-bar GUI that stays at the top of the screen, providin
 ## Features
 
 - **Slim Design**: Minimal screen footprint with a top-bar interface
-- **Tool Discovery**: Automatically discovers available tools from `launch_*.bat` / `launch_*.sh` files
+- **Tool Discovery**: Automatically discovers available tools from `launch_pdf_*.bat` / `launch_pdf_*.sh` files
+- **Tool Categorization**: Tools are automatically organized into categories (Split & Merge, Extract & Analyze, etc.) with visual separators
 - **Window Positioning**: Positions tool windows in the available screen space below the launcher
 - **Global Azure AI Configuration**: Centralized configuration for Azure OpenAI and Document Intelligence services
+- **Process Management**: Properly terminates all tool subprocesses when exiting
 
 ## Screenshots
 
@@ -46,6 +48,16 @@ launcher.bat
 ### Launching Tools
 
 Click on any tool button in the launcher bar to open that utility. The tool window will automatically position itself below the launcher.
+
+**Tool Categories:**
+- Tools are automatically organized into categories:
+  - **Split & Merge**: Tools for splitting and combining PDFs
+  - **Extract & Analyze**: Tools for extracting content from PDFs
+  - **Convert & Transform**: Tools for converting and transforming PDFs
+  - **Optimize**: Tools for compressing and optimizing PDFs
+  - **Security**: Tools for encrypting/decrypting PDFs
+  - **Annotate**: Tools for adding watermarks and annotations
+- Visual separators appear between categories for easy navigation
 
 ### Azure AI Configuration
 

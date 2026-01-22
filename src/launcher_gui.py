@@ -28,6 +28,7 @@ import subprocess
 import platform
 import threading
 import queue
+import time
 from pathlib import Path
 from datetime import datetime
 
@@ -130,8 +131,15 @@ class PDFToolLauncher:
     
     def position_launcher(self):
         """Position the launcher bar at the top of the screen"""
+        # Minimum launcher width
+        MIN_LAUNCHER_WIDTH = 1280
+        
         # Calculate launcher dimensions (full width minus padding, minus log panel if visible)
         self.launcher_width = self.screen_width - (2 * self.LAUNCHER_PADDING)
+        
+        # Ensure minimum width
+        if self.launcher_width < MIN_LAUNCHER_WIDTH:
+            self.launcher_width = MIN_LAUNCHER_WIDTH
         
         # Position at top of screen with padding
         self.x_pos = self.LAUNCHER_PADDING
@@ -143,8 +151,9 @@ class PDFToolLauncher:
         # Calculate available area for tool windows (below launcher)
         self.update_tool_area()
         
-        # Prevent vertical resizing
+        # Prevent vertical resizing, set minimum width
         self.root.resizable(True, False)
+        self.root.minsize(MIN_LAUNCHER_WIDTH, self.LAUNCHER_HEIGHT)
     
     def update_tool_area(self):
         """Update the available area for tool windows based on current launcher position"""
@@ -163,11 +172,12 @@ class PDFToolLauncher:
             current_height = self.LAUNCHER_HEIGHT
             current_width = self.launcher_width
         
-        # Tool area starts below the launcher window with extra padding
-        # Add extra offset to ensure tools don't overlap with launcher (account for window decorations)
-        extra_offset = 50  # Additional spacing below launcher for window title bar clearance
+        # Tool area starts below the launcher window with small padding
+        # Add small offset to ensure tools don't overlap with launcher (account for window decorations)
+        extra_offset = 40  # Small spacing below launcher for visual separation
         self.tool_area_y = self.y_pos + current_height + extra_offset
-        self.tool_area_height = self.screen_height - self.tool_area_y - 60  # 60 for taskbar and bottom margin
+        # Reduce height by the gap amount so total space usage remains the same
+        self.tool_area_height = self.screen_height - self.tool_area_y - 80 - extra_offset  # 80 for taskbar and bottom margin, minus gap
         
         # Tool area X position follows launcher
         self.tool_area_x = self.x_pos
@@ -245,7 +255,18 @@ class PDFToolLauncher:
             height=50,
             highlightthickness=0
         )
-        self.tools_canvas.pack(side='top', fill='x', expand=True)
+        
+        # Horizontal scrollbar for tools
+        self.tools_scrollbar = ttk.Scrollbar(
+            self.tools_frame,
+            orient='horizontal',
+            command=self.tools_canvas.xview
+        )
+        self.tools_canvas.configure(xscrollcommand=self.tools_scrollbar.set)
+        
+        # Pack canvas and scrollbar
+        self.tools_canvas.pack(side='top', fill='both', expand=True)
+        self.tools_scrollbar.pack(side='bottom', fill='x')
         
         # Frame inside canvas for tool buttons
         self.buttons_frame = ttk.Frame(self.tools_canvas)
@@ -255,13 +276,19 @@ class PDFToolLauncher:
             anchor='nw'
         )
         
-        # Configure scrolling
-        self.buttons_frame.bind(
-            '<Configure>',
-            lambda e: self.tools_canvas.configure(scrollregion=self.tools_canvas.bbox('all'))
-        )
+        # Configure scrolling - update scrollregion and canvas window width
+        def configure_scroll_region(event=None):
+            # Update scrollregion
+            self.tools_canvas.configure(scrollregion=self.tools_canvas.bbox('all'))
+            # Update canvas window width to match canvas width
+            canvas_width = self.tools_canvas.winfo_width()
+            if canvas_width > 1:
+                self.tools_canvas.itemconfig(self.canvas_window, width=canvas_width)
         
-        # Mouse wheel scrolling
+        self.buttons_frame.bind('<Configure>', configure_scroll_region)
+        self.tools_canvas.bind('<Configure>', configure_scroll_region)
+        
+        # Mouse wheel scrolling (horizontal)
         self.tools_canvas.bind('<MouseWheel>', self._on_mousewheel)
         self.buttons_frame.bind('<MouseWheel>', self._on_mousewheel)
         
@@ -438,8 +465,38 @@ class PDFToolLauncher:
         self.log_text.config(state=tk.DISABLED)
     
     def _on_mousewheel(self, event):
-        """Handle mouse wheel scrolling"""
-        self.tools_canvas.xview_scroll(int(-1 * (event.delta / 120)), "units")
+        """Handle mouse wheel scrolling - horizontal scroll for tool buttons"""
+        # On Windows, delta is positive for scrolling up/right, negative for down/left
+        # We want horizontal scrolling, so use Shift+Wheel or just wheel
+        # Check if Shift is held for horizontal scroll, otherwise use horizontal
+        if event.state & 0x1:  # Shift key held
+            # Shift+Wheel = horizontal scroll
+            delta = int(-1 * (event.delta / 120))
+        else:
+            # Regular wheel = horizontal scroll (for tool buttons area)
+            delta = int(-1 * (event.delta / 120))
+        
+        self.tools_canvas.xview_scroll(delta, "units")
+    
+    def _get_tool_category(self, name):
+        """Get the category for a tool based on its name."""
+        name_lower = name.lower()
+        
+        # Define categories
+        if any(keyword in name_lower for keyword in ["split", "combine", "merge", "join"]):
+            return "split_merge"
+        elif any(keyword in name_lower for keyword in ["extract", "text", "ocr", "read"]):
+            return "extract_analyze"
+        elif any(keyword in name_lower for keyword in ["convert", "transform", "rotate", "resize"]):
+            return "convert_transform"
+        elif any(keyword in name_lower for keyword in ["compress", "optimize", "reduce"]):
+            return "optimize"
+        elif any(keyword in name_lower for keyword in ["encrypt", "decrypt", "protect", "password"]):
+            return "security"
+        elif any(keyword in name_lower for keyword in ["watermark", "stamp", "annotate"]):
+            return "annotate"
+        else:
+            return "other"
     
     def scan_launchers(self):
         """Scan for PDF tool launcher files"""
@@ -451,15 +508,21 @@ class PDFToolLauncher:
         # Scan for launch_*.bat or launch_*.sh files
         for launcher_file in self.root_dir.glob(f"launch_*{self.launcher_ext}"):
             name = launcher_file.stem.replace("launch_", "")
+            category = self._get_tool_category(name)
             self.launchers.append({
                 "name": name,
                 "display_name": self._format_tool_name(name),
                 "path": launcher_file,
-                "icon": self._get_tool_icon(name)
+                "icon": self._get_tool_icon(name),
+                "category": category
             })
         
-        # Sort alphabetically
-        self.launchers.sort(key=lambda x: x["name"])
+        # Sort by category, then alphabetically within category
+        category_order = ["split_merge", "extract_analyze", "convert_transform", "optimize", "security", "annotate", "other"]
+        self.launchers.sort(key=lambda x: (
+            category_order.index(x["category"]) if x["category"] in category_order else len(category_order),
+            x["name"]
+        ))
     
     def _format_tool_name(self, name):
         """Format tool name for display"""
@@ -470,6 +533,7 @@ class PDFToolLauncher:
         icons = {
             "split": "✂️",
             "merge": "🔗",
+            "combine": "🔗",
             "compress": "📦",
             "ocr": "👁️",
             "rotate": "🔄",
@@ -494,7 +558,7 @@ class PDFToolLauncher:
         return "📄"
     
     def populate_tools(self):
-        """Populate the launcher with tool buttons"""
+        """Populate the launcher with tool buttons, grouped by category with separators"""
         for widget in self.buttons_frame.winfo_children():
             widget.destroy()
         
@@ -507,10 +571,53 @@ class PDFToolLauncher:
             placeholder.pack(padx=10, pady=15)
             return
         
+        # Group tools by category
+        current_category = None
+        category_names = {
+            "split_merge": "Split & Merge",
+            "extract_analyze": "Extract & Analyze",
+            "convert_transform": "Convert & Transform",
+            "optimize": "Optimize",
+            "security": "Security",
+            "annotate": "Annotate",
+            "other": "Other"
+        }
+        
         for launcher in self.launchers:
+            # Add separator and category label if category changed
+            if launcher["category"] != current_category:
+                # Add separator before new category (but not before first category)
+                if current_category is not None:
+                    self._create_category_separator()
+                
+                # Add category label for new category
+                category_label = ttk.Label(
+                    self.buttons_frame,
+                    text=category_names.get(launcher["category"], "Other"),
+                    font=("Segoe UI", 8, "bold"),
+                    foreground="#64748b"
+                )
+                category_label.pack(side='left', padx=(10, 5), pady=5)
+                current_category = launcher["category"]
+            
             self._create_tool_button(launcher)
         
+        # Update scrollregion after all buttons are added
+        self.root.after_idle(lambda: self.tools_canvas.configure(scrollregion=self.tools_canvas.bbox('all')))
+        
         self.status_label.config(text=f"{len(self.launchers)} tools")
+    
+    def _create_category_separator(self):
+        """Create a visual separator between tool categories"""
+        # Create a frame to hold the separator with proper sizing
+        sep_frame = ttk.Frame(self.buttons_frame)
+        sep_frame.pack(side='left', padx=5, pady=5)
+        
+        separator = ttk.Separator(sep_frame, orient='vertical')
+        separator.pack(fill='y', expand=True)
+        
+        # Set minimum height for separator visibility
+        sep_frame.config(height=30)
     
     def _create_tool_button(self, launcher):
         """Create a tool button"""
@@ -717,19 +824,100 @@ class PDFToolLauncher:
         self.scan_launchers()
         self.populate_tools()
     
+    def _kill_process_tree_windows(self, pid):
+        """Kill a process and all its children on Windows using taskkill"""
+        try:
+            # Use /T flag to kill process tree (parent and all children)
+            result = subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(pid)],
+                capture_output=True,
+                timeout=3,
+                creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
+            )
+            return result.returncode == 0
+        except Exception as e:
+            print(f"taskkill failed for PID {pid}: {e}")
+            return False
+    
     def close_all_tools(self):
-        """Close all running tool windows"""
+        """Close all running tool windows - forcefully terminate processes and their children"""
         closed_count = 0
-        for tool_name, process in list(self.running_tools.items()):
-            if process.poll() is None:
-                try:
-                    process.terminate()
-                    self.append_log(f"Terminated", tool_name)
-                    closed_count += 1
-                except Exception as e:
-                    self.append_log(f"Failed to terminate: {str(e)}", tool_name, is_error=True)
+        processes_to_kill = []
         
+        # Collect all processes to kill
+        for tool_name, process in list(self.running_tools.items()):
+            if process.poll() is None:  # Process is still running
+                processes_to_kill.append((tool_name, process, process.pid))
+        
+        if not processes_to_kill:
+            return
+        
+        # First, try graceful termination
+        for tool_name, process, pid in processes_to_kill:
+            try:
+                process.terminate()
+                self.append_log(f"Terminating {tool_name} (PID {pid})...", tool_name)
+            except Exception as e:
+                self.append_log(f"Failed to terminate: {str(e)}", tool_name, is_error=True)
+        
+        # Wait for graceful shutdown
+        time.sleep(0.8)
+        self.root.update()
+        
+        # Force kill any processes that are still running
+        for tool_name, process, pid in processes_to_kill:
+            try:
+                if process.poll() is None:  # Still running
+                    if self.is_windows:
+                        # On Windows, kill the process tree using taskkill
+                        self.append_log(f"Force killing {tool_name} and children (PID {pid})...", tool_name)
+                        if self._kill_process_tree_windows(pid):
+                            self.append_log(f"Killed {tool_name} via taskkill /T", tool_name)
+                            closed_count += 1
+                        else:
+                            # Fallback: try process.kill()
+                            try:
+                                process.kill()
+                                time.sleep(0.2)
+                                if process.poll() is None:
+                                    # Still running, try taskkill again without /T
+                                    subprocess.run(
+                                        ["taskkill", "/F", "/PID", str(pid)],
+                                        capture_output=True,
+                                        timeout=2,
+                                        creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
+                                    )
+                                self.append_log(f"Killed {tool_name}", tool_name)
+                                closed_count += 1
+                            except Exception as e:
+                                self.append_log(f"Failed to kill {tool_name}: {str(e)}", tool_name, is_error=True)
+                    else:
+                        # On Unix, kill() sends SIGKILL
+                        process.kill()
+                        time.sleep(0.2)
+                        self.append_log(f"Force killed {tool_name}", tool_name)
+                        closed_count += 1
+                else:
+                    # Process already terminated
+                    closed_count += 1
+            except (ProcessLookupError, ValueError):
+                # Process already gone
+                closed_count += 1
+            except Exception as e:
+                self.append_log(f"Error killing {tool_name}: {str(e)}", tool_name, is_error=True)
+                # Still try Windows taskkill as last resort
+                if self.is_windows:
+                    try:
+                        self._kill_process_tree_windows(pid)
+                        closed_count += 1
+                    except Exception:
+                        pass
+        
+        # Clear the tracking dictionaries
         self.running_tools.clear()
+        if hasattr(self, 'output_threads'):
+            self.output_threads.clear()
+        
         self.status_label.config(text=f"Closed {closed_count} tools")
         self.root.after(2000, lambda: self.status_label.config(text=f"{len(self.launchers)} tools"))
     
@@ -1085,23 +1273,72 @@ class PDFToolLauncher:
     
     def on_close(self):
         """Handle window close - offer to close all tools"""
-        running_count = sum(1 for p in self.running_tools.values() if p.poll() is None)
-        
-        if running_count > 0:
-            response = messagebox.askyesnocancel(
-                "Exit PyPDF Toolbox",
-                f"There are {running_count} tool(s) still running.\n\n"
-                "Yes = Close all tools and exit\n"
-                "No = Exit launcher only (keep tools open)\n"
-                "Cancel = Don't exit"
-            )
+        try:
+            running_count = sum(1 for p in self.running_tools.values() if p.poll() is None)
             
-            if response is None:  # Cancel
-                return
-            elif response:  # Yes - close all
-                self.close_all_tools()
-        
-        self.root.destroy()
+            if running_count > 0:
+                response = messagebox.askyesnocancel(
+                    "Exit PyPDF Toolbox",
+                    f"There are {running_count} tool(s) still running.\n\n"
+                    "Yes = Close all tools and exit\n"
+                    "No = Exit launcher only (keep tools open)\n"
+                    "Cancel = Don't exit"
+                )
+                
+                if response is None:  # Cancel
+                    return
+                elif response:  # Yes - close all
+                    # Get list of processes with PIDs before closing (since close_all_tools clears the dict)
+                    processes_to_kill = [(name, proc, proc.pid) for name, proc in self.running_tools.items() if proc.poll() is None]
+                    
+                    # Close all tools (this will try to kill them)
+                    self.close_all_tools()
+                    
+                    # Wait a bit for processes to actually terminate
+                    time.sleep(0.5)
+                    self.root.update()
+                    
+                    # Double-check and force kill any remaining processes by PID
+                    for tool_name, process, pid in processes_to_kill:
+                        try:
+                            # Check if process is still running by PID
+                            if process.poll() is None:
+                                # On Windows, kill the entire process tree
+                                if self.is_windows:
+                                    self._kill_process_tree_windows(pid)
+                                    time.sleep(0.2)
+                                    # Try one more time if still running
+                                    if process.poll() is None:
+                                        subprocess.run(
+                                            ["taskkill", "/F", "/T", "/PID", str(pid)],
+                                            capture_output=True,
+                                            timeout=2,
+                                            creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
+                                        )
+                                else:
+                                    process.kill()
+                        except (ProcessLookupError, ValueError):
+                            # Process already terminated, ignore
+                            pass
+                        except Exception as e:
+                            # Log but don't block exit
+                            print(f"Warning: Could not kill process {tool_name} (PID {pid}): {e}")
+                    
+                    # Final wait to ensure processes are gone
+                    time.sleep(0.3)
+            
+            # Always destroy the window, even if there were errors
+            self.root.quit()  # Stop the mainloop first
+            self.root.destroy()  # Then destroy the window
+            
+        except Exception as e:
+            # If anything goes wrong, still try to close
+            print(f"Error in on_close: {e}")
+            try:
+                self.root.quit()
+                self.root.destroy()
+            except:
+                pass
 
 
 def main():

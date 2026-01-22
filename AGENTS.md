@@ -6,22 +6,54 @@ This document provides guidelines for AI agents working on this project.
 
 ### SUMMARIZE Command
 
-When the user types **SUMMARIZE**, create a squashed commit message summarizing all changes made during the session. The message should be:
-- Copy-ready (user can paste directly into git commit)
-- Follow conventional commit format
-- Include a brief summary line followed by bullet points of changes
-- Group related changes together
+When the user types **SUMMARIZE** (or requests a "squashed commit message" or "COPY READY" commit message), create a squashed commit message summarizing all changes made during the session. The message should be:
+- **Copy-ready** (user can paste directly into git commit -m "")
+- **Follow conventional commit format** (feat:, fix:, refactor:, docs:, etc.)
+- **Include a brief summary line** (max 72 characters) followed by bullet points of changes
+- **Group related changes together** logically
+- **Be specific** about what was changed and in which files
+- **Use present tense** ("Add feature" not "Added feature")
+- **Focus on user-visible changes** and important technical changes
 
-Example format:
+**Format:**
 ```
-feat: Add PDF Manual Splitter tool with launcher GUI
+<type>: <brief summary (max 72 chars)>
 
-- Add launcher_gui.py with slim top-bar design
-- Add pdf_manual_splitter.py tool with drag & drop support
-- Add Azure AI shared configuration system
-- Create launcher scripts for Windows/Linux/Mac
-- Add silent launch options (PyPDF_Toolbox.pyw, start.bat, launcher.ps1)
-- Configure tool window positioning below launcher
+- <Change 1>
+- <Change 2>
+- <Change 3>
+```
+
+**Conventional Commit Types:**
+- `feat:` - New feature
+- `fix:` - Bug fix
+- `refactor:` - Code refactoring
+- `docs:` - Documentation changes
+- `style:` - UI/styling changes
+- `perf:` - Performance improvements
+- `chore:` - Maintenance tasks
+
+**Example formats:**
+
+```
+feat: Add wait cursor feedback during PDF processing in Text Extractor
+
+- Add wait cursor (hourglass) when PDF files are dropped or processing starts
+- Implement cursor management in process_files() method with try/finally block
+- Ensure cursor is restored to normal state after processing completes or on errors
+- Works for all input methods: drag & drop, file selection, and folder selection
+- Force immediate cursor update with root.update() for better UX feedback
+```
+
+```
+feat: Add tool categorization and grouping in launcher GUI
+
+- Add _get_tool_category() method to categorize tools by functionality
+- Group tools by category: split_merge, extract_analyze, convert_transform, optimize, security, annotate, other
+- Add visual category separators and labels in launcher toolbar
+- Sort tools by category first, then alphabetically within category
+- Add category metadata to launcher entries
+- Update populate_tools() to display categorized groups with separators
 ```
 
 ## Project Overview
@@ -959,7 +991,7 @@ doc/
 
 ### When Creating a New Tool
 
-1. Create a new folder under `doc/` matching the tool name (e.g., `doc/manual-splitter/`)
+1. Create a new folder under `doc/` matching the tool name (e.g., `doc/pdf-splitter/`)
 2. Add a `README.md` with:
    - Tool description and features
    - Screenshots table (placeholders for images to be added later)
@@ -968,6 +1000,7 @@ doc/
    - Keyboard shortcuts (if applicable)
 3. Create a `screenshots/` subfolder with a `.gitkeep` file listing expected screenshots
 4. Update `doc/README.md` to include the new tool in the index table
+5. **Update main `README.md`**: When a screenshot becomes available (`01-main-window.png`), add the tool to the 3-column image grid in the "Available Tools" section
 
 ### Screenshot Naming Convention
 
@@ -1015,9 +1048,33 @@ When creating documentation for a new tool, include these sections:
 | `Ctrl+O` | Open file |
 ```
 
+### Main README.md Image Grid
+
+The main `README.md` displays tools in a **3-column image grid** format:
+
+```markdown
+<div align="center">
+
+| | | |
+|---|---|---|
+| [![Tool 1](doc/tool1/screenshots/01-main-window.png)](doc/tool1/) | [![Tool 2](doc/tool2/screenshots/01-main-window.png)](doc/tool2/) | [![Tool 3](doc/tool3/screenshots/01-main-window.png)](doc/tool3/) |
+| **Tool 1**<br/>Description | **Tool 2**<br/>Description | **Tool 3**<br/>Description |
+| [`launch_tool1`](doc/tool1/) | [`launch_tool2`](doc/tool2/) | [`launch_tool3`](doc/tool3/) |
+
+</div>
+```
+
+**Guidelines:**
+- Tools are displayed in a 3-column grid (3 tools per row)
+- Each tool shows: screenshot thumbnail, name, brief description, and launch script link
+- When adding a new tool, append it to the grid (start a new row if needed)
+- Only include tools that have a `01-main-window.png` screenshot available
+- If a tool doesn't have a screenshot yet, add it to the grid once the screenshot is created
+
 ### Important Notes
 
 - Keep documentation in sync with code changes
 - Update screenshots when UI changes significantly
 - Document all keyboard shortcuts and features
 - Include troubleshooting tips for common issues
+- Update main README.md image grid when new tool screenshots become available

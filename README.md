@@ -2,6 +2,10 @@
 
 A collection of Python-based PDF utility tools with a unified graphical launcher interface.
 
+![Main Launcher Window](doc/launcher/screenshots/01-main-window.png)
+
+*Main launcher bar showing tool categories, available tools, and control buttons*
+
 ## Features
 
 - **Slim Launcher Bar**: A compact, always-on-top toolbar that stays at the top of your screen
@@ -15,8 +19,20 @@ A collection of Python-based PDF utility tools with a unified graphical launcher
 
 ### Implemented Tools
 
-- **Manual Splitter** (`launch_manual_splitter`): Manually split PDFs by selecting split points with visual thumbnail preview
-- **Text Extractor** (`launch_text_extractor`): Extract text from PDFs using Python (PyMuPDF), OCR (OCRmyPDF), or Azure AI Document Intelligence. Supports Text, Markdown, and JSON output formats
+<div align="center">
+
+| | | |
+|---|---|---|
+| [![PDF Splitter](doc/pdf-splitter/screenshots/01-main-window.png)](doc/pdf-splitter/) | [![PDF Visual Combiner](doc/pdf-combiner/screenshots/01-main-window.png)](doc/pdf-combiner/) | [![PDF Text Extractor](doc/text-extractor/screenshots/01-main-window.png)](doc/text-extractor/) |
+| **PDF Splitter**<br/>Manually split PDFs by selecting split points with visual thumbnail preview | **PDF Visual Combiner**<br/>Combine multiple PDFs by visually selecting individual pages from thumbnails | **PDF Text Extractor**<br/>Extract text from PDFs using Python, OCR, or Azure AI |
+| [`launch_pdf_splitter`](doc/pdf-splitter/) | [`launch_pdf_visual_combiner`](doc/pdf-combiner/) | [`launch_pdf_text_extractor`](doc/text-extractor/) |
+
+</div>
+
+**Features:**
+- **PDF Splitter**: Visual thumbnail preview, drag & drop support, custom page ranges
+- **PDF Visual Combiner**: Configurable thumbnail sizes, auto-selection patterns, multiple PDF support
+- **PDF Text Extractor**: Multiple extraction methods (Python, OCR, Azure AI), multiple output formats (Text, Markdown, JSON)
 
 ### Planned Tools
 
@@ -98,9 +114,10 @@ To add a new PDF tool:
 
 1. Create your tool script in the `src/` directory (e.g., `src/pdf_split.py`)
 2. Create a launcher script in the root directory:
-   - Windows: `launch_split.bat`
-   - Linux/macOS: `launch_split.sh`
-3. The tool will automatically appear in the launcher GUI
+   - Windows: `launch_pdf_split.bat` (follow naming: `launch_pdf_<toolname>.bat`)
+   - Linux/macOS: `launch_pdf_split.sh` (follow naming: `launch_pdf_<toolname>.sh`)
+3. The tool will automatically appear in the launcher GUI, categorized by functionality
+4. Tools are automatically grouped into categories (Split & Merge, Extract & Analyze, etc.)
 
 ### Tool Window Positioning
 
@@ -141,8 +158,8 @@ pypdf-toolbox-gui/
 ├── requirements.txt      # Python dependencies
 ├── README.md            # This file
 ├── LICENSE              # Apache 2.0 License
-├── launch_*.bat         # Individual tool launchers (Windows)
-├── launch_*.sh          # Individual tool launchers (Linux/macOS)
+├── launch_pdf_*.bat     # Individual tool launchers (Windows)
+├── launch_pdf_*.sh      # Individual tool launchers (Linux/macOS)
 ├── src/
 │   ├── launcher_gui.py  # Main launcher GUI
 │   └── (tool scripts)   # Individual PDF tool scripts

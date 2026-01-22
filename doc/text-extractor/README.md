@@ -16,7 +16,9 @@ The PDF Text Extractor allows you to extract text from PDF documents using multi
 
 ## Screenshots
 
-*Screenshots will be added to the `screenshots/` folder.*
+![Main Window](screenshots/01-main-window.png)
+
+*Main interface showing extraction methods, output formats, and drag & drop zone*
 
 | Screenshot | Description |
 |------------|-------------|
@@ -108,8 +110,9 @@ python src/pdf_text_extractor.py --gui
 ## Technical Details
 
 - **Source File**: `src/pdf_text_extractor.py`
-- **Launch Script**: `launch_text_extractor.bat` / `launch_text_extractor.sh`
+- **Launch Script**: `launch_pdf_text_extractor.bat` / `launch_pdf_text_extractor.sh`
 - **Framework**: tkinter with ttk widgets, tkinterdnd2 for drag-and-drop
+- **Display Name**: PDF Text Extractor (in launcher)
 - **PDF Libraries**: 
   - PyMuPDF (fitz) for Python extraction
   - OCRmyPDF + Tesseract for OCR

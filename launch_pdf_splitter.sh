@@ -11,5 +11,5 @@ if [ ! -f "$PYTHON_EXE" ]; then
     exit 1
 fi
 
-# Launch the PDF Manual Splitter tool
+# Launch the PDF Splitter tool
 "$PYTHON_EXE" "$SCRIPT_DIR/src/pdf_manual_splitter.py" "$@"

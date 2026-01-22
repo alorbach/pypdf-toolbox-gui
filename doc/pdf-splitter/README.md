@@ -1,6 +1,6 @@
-# PDF Manual Splitter Documentation
+# PDF Splitter Documentation
 
-The PDF Manual Splitter allows you to manually split PDF documents by selecting specific page ranges.
+The PDF Splitter allows you to manually split PDF documents by selecting split points with visual thumbnail preview.
 
 ## Features
 
@@ -12,7 +12,9 @@ The PDF Manual Splitter allows you to manually split PDF documents by selecting 
 
 ## Screenshots
 
-*Screenshots will be added to the `screenshots/` folder.*
+![Main Window](screenshots/01-main-window.png)
+
+*Main splitter interface with drag & drop zone and results area*
 
 | Screenshot | Description |
 |------------|-------------|
@@ -45,9 +47,10 @@ The PDF Manual Splitter allows you to manually split PDF documents by selecting 
 ## Technical Details
 
 - **Source File**: `src/pdf_manual_splitter.py`
-- **Launch Script**: `launch_manual_splitter.bat` / `launch_manual_splitter.sh`
+- **Launch Script**: `launch_pdf_splitter.bat` / `launch_pdf_splitter.sh`
 - **Framework**: tkinter with ttk widgets, tkinterdnd2 for drag-and-drop
 - **PDF Library**: PyPDF2 / pypdf
+- **Display Name**: PDF Splitter (in launcher)
 
 ## Keyboard Shortcuts
 

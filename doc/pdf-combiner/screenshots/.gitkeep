@@ -1,0 +1,8 @@
+# Screenshots for PDF Combiner
+
+Expected screenshots:
+- 01-main-window.png - Main combiner interface
+- 02-drag-drop.png - Drag and drop zone
+- 03-files-added.png - Files added to the list
+- 04-reorder-files.png - Reordering files dialog
+- 05-combine-complete.png - Combine operation completed
