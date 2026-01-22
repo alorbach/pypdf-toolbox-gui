@@ -31,6 +31,39 @@ import queue
 from pathlib import Path
 from datetime import datetime
 
+# HTTP requests for testing connections
+try:
+    import requests
+    REQUESTS_AVAILABLE = True
+except ImportError:
+    REQUESTS_AVAILABLE = False
+
+# Azure AI configuration
+try:
+    # Try both import paths (when run as module or directly)
+    try:
+        from src.utils.azure_config import get_azure_config
+        print("[INFO] Azure config loaded from src.utils.azure_config")
+    except ImportError:
+        try:
+            from utils.azure_config import get_azure_config
+            print("[INFO] Azure config loaded from utils.azure_config")
+        except ImportError:
+            # Try relative import
+            import sys
+            from pathlib import Path
+            utils_path = Path(__file__).parent / "utils"
+            if utils_path.exists():
+                sys.path.insert(0, str(Path(__file__).parent))
+                from utils.azure_config import get_azure_config
+                print("[INFO] Azure config loaded via relative import")
+            else:
+                raise ImportError("Could not find utils.azure_config module")
+    AZURE_CONFIG_AVAILABLE = True
+except ImportError as e:
+    print(f"[WARNING] Azure config not available: {e}")
+    AZURE_CONFIG_AVAILABLE = False
+
 
 class PDFToolLauncher:
     """Main launcher window - slim bar at top of screen with expandable log panel"""
@@ -91,6 +124,9 @@ class PDFToolLauncher:
         
         # Start log queue processor
         self.process_log_queue()
+        
+        # Check and install missing critical dependencies
+        self.check_dependencies()
     
     def position_launcher(self):
         """Position the launcher bar at the top of the screen"""
@@ -262,6 +298,15 @@ class PDFToolLauncher:
             width=8
         )
         self.log_toggle_btn.pack(side='left', padx=2)
+        
+        # Azure AI Configuration button (always show, will handle error in dialog if needed)
+        azure_btn = ttk.Button(
+            right_frame,
+            text="⚙️ Azure",
+            command=self.show_azure_config,
+            width=8
+        )
+        azure_btn.pack(side='left', padx=2)
         
         # Exit button
         exit_btn = ttk.Button(
@@ -687,6 +732,356 @@ class PDFToolLauncher:
         self.running_tools.clear()
         self.status_label.config(text=f"Closed {closed_count} tools")
         self.root.after(2000, lambda: self.status_label.config(text=f"{len(self.launchers)} tools"))
+    
+    def check_dependencies(self):
+        """Check for missing critical dependencies and offer to install them."""
+        missing_deps = []
+        
+        # Check for requests (needed for Azure config testing)
+        try:
+            import requests
+        except ImportError:
+            missing_deps.append("requests")
+        
+        # Check for yaml (needed for Azure config)
+        try:
+            import yaml
+        except ImportError:
+            missing_deps.append("pyyaml")
+        
+        if missing_deps:
+            response = messagebox.askyesno(
+                "Missing Dependencies",
+                f"The following required packages are missing:\n\n"
+                f"{', '.join(missing_deps)}\n\n"
+                f"Would you like to install them now?\n\n"
+                f"(This will run: pip install {' '.join(missing_deps)})"
+            )
+            
+            if response:
+                try:
+                    python_exe = self.root_dir / "venv" / "Scripts" / "python.exe" if self.is_windows else self.root_dir / "venv" / "bin" / "python"
+                    
+                    if not python_exe.exists():
+                        python_exe = sys.executable
+                    
+                    # Install missing packages
+                    for dep in missing_deps:
+                        self.append_log(f"Installing {dep}...", "Launcher")
+                        result = subprocess.run(
+                            [str(python_exe), "-m", "pip", "install", dep],
+                            cwd=str(self.root_dir),
+                            capture_output=True,
+                            text=True,
+                            timeout=60
+                        )
+                        if result.returncode == 0:
+                            self.append_log(f"✓ {dep} installed successfully", "Launcher")
+                        else:
+                            self.append_log(f"✗ Failed to install {dep}: {result.stderr}", "Launcher", is_error=True)
+                    
+                    messagebox.showinfo(
+                        "Installation Complete",
+                        "Dependencies installed. Please restart the application for changes to take effect."
+                    )
+                except Exception as e:
+                    messagebox.showerror(
+                        "Installation Failed",
+                        f"Failed to install dependencies:\n\n{str(e)}\n\n"
+                        f"Please run manually:\n"
+                        f"pip install {' '.join(missing_deps)}"
+                    )
+    
+    def show_azure_config(self):
+        """Show Azure AI configuration dialog"""
+        if not AZURE_CONFIG_AVAILABLE:
+            messagebox.showerror(
+                "Error",
+                "Azure configuration module not available.\n\n"
+                "Please ensure:\n"
+                "1. PyYAML is installed: pip install pyyaml\n"
+                "2. The utils/azure_config.py file exists"
+            )
+            return
+        
+        try:
+            # Get config instance
+            config = get_azure_config(root_dir=self.root_dir)
+        except Exception as e:
+            messagebox.showerror(
+                "Error",
+                f"Failed to load Azure configuration:\n{str(e)}\n\n"
+                "Please check that the configuration module is available."
+            )
+            return
+        
+        # Create dialog window
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Azure AI Configuration")
+        dialog.geometry("600x650")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        dialog.resizable(False, False)
+        
+        # Center dialog
+        dialog.update_idletasks()
+        x = (dialog.winfo_screenwidth() // 2) - (dialog.winfo_width() // 2)
+        y = (dialog.winfo_screenheight() // 2) - (dialog.winfo_height() // 2)
+        dialog.geometry(f"+{x}+{y}")
+        
+        # Main container
+        main_frame = ttk.Frame(dialog, padding=15)
+        main_frame.pack(fill='both', expand=True)
+        
+        # Title
+        title_label = ttk.Label(
+            main_frame,
+            text="Azure AI Configuration",
+            font=("Segoe UI", 14, "bold")
+        )
+        title_label.pack(pady=(0, 10))
+        
+        # Description
+        desc_label = ttk.Label(
+            main_frame,
+            text="Configure Azure AI services for all PDF tools.\nSettings are shared across all tools.",
+            font=("Segoe UI", 9),
+            justify='center'
+        )
+        desc_label.pack(pady=(0, 15))
+        
+        # Azure OpenAI section
+        openai_frame = ttk.LabelFrame(main_frame, text="Azure OpenAI", padding=10)
+        openai_frame.pack(fill='x', pady=5)
+        
+        ttk.Label(openai_frame, text="Endpoint:").grid(row=0, column=0, sticky='w', pady=2)
+        openai_endpoint_var = tk.StringVar(value=config.openai_endpoint)
+        openai_endpoint_entry = ttk.Entry(openai_frame, textvariable=openai_endpoint_var, width=50)
+        openai_endpoint_entry.grid(row=0, column=1, sticky='ew', padx=5, pady=2)
+        
+        ttk.Label(openai_frame, text="API Key:").grid(row=1, column=0, sticky='w', pady=2)
+        openai_key_var = tk.StringVar(value=config.openai_api_key)
+        openai_key_entry = ttk.Entry(openai_frame, textvariable=openai_key_var, width=50, show='*')
+        openai_key_entry.grid(row=1, column=1, sticky='ew', padx=5, pady=2)
+        
+        ttk.Label(openai_frame, text="Deployment:").grid(row=2, column=0, sticky='w', pady=2)
+        openai_deploy_var = tk.StringVar(value=config.openai_deployment)
+        openai_deploy_entry = ttk.Entry(openai_frame, textvariable=openai_deploy_var, width=50)
+        openai_deploy_entry.grid(row=2, column=1, sticky='ew', padx=5, pady=2)
+        
+        ttk.Label(openai_frame, text="API Version:").grid(row=3, column=0, sticky='w', pady=2)
+        openai_version_var = tk.StringVar(value=config.openai_api_version)
+        openai_version_entry = ttk.Entry(openai_frame, textvariable=openai_version_var, width=50)
+        openai_version_entry.grid(row=3, column=1, sticky='ew', padx=5, pady=2)
+        
+        openai_frame.columnconfigure(1, weight=1)
+        
+        # Azure Document Intelligence section
+        doc_intel_frame = ttk.LabelFrame(main_frame, text="Azure Document Intelligence", padding=10)
+        doc_intel_frame.pack(fill='x', pady=5)
+        
+        ttk.Label(doc_intel_frame, text="Endpoint:").grid(row=0, column=0, sticky='w', pady=2)
+        doc_intel_endpoint_var = tk.StringVar(value=config.doc_intel_endpoint)
+        doc_intel_endpoint_entry = ttk.Entry(doc_intel_frame, textvariable=doc_intel_endpoint_var, width=50)
+        doc_intel_endpoint_entry.grid(row=0, column=1, sticky='ew', padx=5, pady=2)
+        
+        ttk.Label(doc_intel_frame, text="API Key:").grid(row=1, column=0, sticky='w', pady=2)
+        doc_intel_key_var = tk.StringVar(value=config.doc_intel_api_key)
+        doc_intel_key_entry = ttk.Entry(doc_intel_frame, textvariable=doc_intel_key_var, width=50, show='*')
+        doc_intel_key_entry.grid(row=1, column=1, sticky='ew', padx=5, pady=2)
+        
+        doc_intel_frame.columnconfigure(1, weight=1)
+        
+        # Status section
+        status_frame = ttk.LabelFrame(main_frame, text="Configuration Status", padding=10)
+        status_frame.pack(fill='x', pady=5)
+        
+        status_text = config.get_status_text()
+        status_label = ttk.Label(
+            status_frame,
+            text=status_text,
+            font=("Consolas", 9),
+            justify='left'
+        )
+        status_label.pack(anchor='w')
+        
+        # Environment variables hint
+        env_hint_frame = ttk.Frame(main_frame)
+        env_hint_frame.pack(fill='x', pady=5)
+        
+        hint_text = (
+            "💡 You can also set environment variables:\n"
+            "   AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_API_KEY, AZURE_OPENAI_DEPLOYMENT\n"
+            "   AZURE_DOC_INTEL_ENDPOINT, AZURE_DOC_INTEL_API_KEY"
+        )
+        hint_label = ttk.Label(
+            env_hint_frame,
+            text=hint_text,
+            font=("Segoe UI", 8),
+            foreground='gray',
+            justify='left'
+        )
+        hint_label.pack(anchor='w', padx=5)
+        
+        # Buttons
+        button_frame = ttk.Frame(main_frame)
+        button_frame.pack(fill='x', pady=(10, 0))
+        
+        def test_connection():
+            """Test Azure connections"""
+            if not REQUESTS_AVAILABLE:
+                messagebox.showerror(
+                    "Error",
+                    "The 'requests' library is not installed.\n\n"
+                    "Install it with: pip install requests"
+                )
+                return
+            
+            # Update config with current values
+            config.openai_endpoint = openai_endpoint_var.get().strip()
+            config.openai_api_key = openai_key_var.get().strip()
+            config.openai_deployment = openai_deploy_var.get().strip()
+            config.openai_api_version = openai_version_var.get().strip()
+            config.doc_intel_endpoint = doc_intel_endpoint_var.get().strip()
+            config.doc_intel_api_key = doc_intel_key_var.get().strip()
+            
+            results = []
+            
+            # Test Azure OpenAI
+            if config.openai_endpoint and config.openai_api_key:
+                try:
+                    # Test OpenAI endpoint
+                    test_url = config.openai_endpoint.rstrip('/')
+                    if not test_url.endswith('/openai'):
+                        test_url = f"{test_url}/openai"
+                    test_url = f"{test_url}/models?api-version={config.openai_api_version}"
+                    
+                    headers = {
+                        "api-key": config.openai_api_key,
+                        "Content-Type": "application/json"
+                    }
+                    
+                    response = requests.get(test_url, headers=headers, timeout=10)
+                    if response.status_code == 200:
+                        results.append("✓ Azure OpenAI: Connection successful")
+                    else:
+                        results.append(f"✗ Azure OpenAI: Connection failed (HTTP {response.status_code})")
+                except requests.exceptions.RequestException as e:
+                    results.append(f"✗ Azure OpenAI: Connection failed ({str(e)})")
+                except Exception as e:
+                    results.append(f"✗ Azure OpenAI: Error ({str(e)})")
+            else:
+                results.append("○ Azure OpenAI: Not configured (missing endpoint or API key)")
+            
+            # Test Azure Document Intelligence
+            if config.doc_intel_endpoint and config.doc_intel_api_key:
+                try:
+                    # Test Document Intelligence endpoint
+                    test_url = config.doc_intel_endpoint.rstrip('/')
+                    if not test_url.endswith('/formrecognizer'):
+                        test_url = f"{test_url}/formrecognizer"
+                    test_url = f"{test_url}/info?api-version=2023-07-31"
+                    
+                    headers = {
+                        "Ocp-Apim-Subscription-Key": config.doc_intel_api_key
+                    }
+                    
+                    response = requests.get(test_url, headers=headers, timeout=10)
+                    if response.status_code == 200:
+                        results.append("✓ Document Intelligence: Connection successful")
+                    else:
+                        results.append(f"✗ Document Intelligence: Connection failed (HTTP {response.status_code})")
+                except requests.exceptions.RequestException as e:
+                    results.append(f"✗ Document Intelligence: Connection failed ({str(e)})")
+                except Exception as e:
+                    results.append(f"✗ Document Intelligence: Error ({str(e)})")
+            else:
+                results.append("○ Document Intelligence: Not configured (missing endpoint or API key)")
+            
+            # Update status display
+            status_text = config.get_status_text()
+            status_label.config(text=status_text)
+            
+            # Show test results
+            result_message = "Connection Test Results:\n\n" + "\n".join(results)
+            messagebox.showinfo("Test Complete", result_message)
+        
+        def save_config():
+            """Save configuration"""
+            # Update config with current values
+            config.openai_endpoint = openai_endpoint_var.get().strip()
+            config.openai_api_key = openai_key_var.get().strip()
+            config.openai_deployment = openai_deploy_var.get().strip()
+            config.openai_api_version = openai_version_var.get().strip()
+            config.doc_intel_endpoint = doc_intel_endpoint_var.get().strip()
+            config.doc_intel_api_key = doc_intel_key_var.get().strip()
+            
+            # Check if user wants to save API keys
+            has_keys = bool(config.openai_api_key or config.doc_intel_api_key)
+            
+            if has_keys:
+                # Ask user if they want to save API keys to file
+                response = messagebox.askyesno(
+                    "Save API Keys?",
+                    "Do you want to save API keys to the configuration file?\n\n"
+                    "⚠️ Security Note: API keys will be stored in plain text.\n"
+                    "The config file is in .gitignore, but keep it secure.\n\n"
+                    "Yes = Save keys to file\n"
+                    "No = Save endpoints only (use environment variables for keys)"
+                )
+                save_keys = response
+            else:
+                save_keys = False
+            
+            # Save to file (with or without keys based on user choice)
+            if config.save_config(save_api_keys=save_keys):
+                # Reload config to ensure it's up to date (in case of env var overrides)
+                # But preserve the keys we just saved if they're not in env vars
+                saved_openai_key = config.openai_api_key if not os.environ.get('AZURE_OPENAI_API_KEY') else None
+                saved_doc_intel_key = config.doc_intel_api_key if not os.environ.get('AZURE_DOC_INTEL_API_KEY') else None
+                
+                # Reload from file
+                config.reload_config()
+                
+                # Restore saved keys if they weren't overridden by env vars
+                if saved_openai_key and not os.environ.get('AZURE_OPENAI_API_KEY'):
+                    config.openai_api_key = saved_openai_key
+                if saved_doc_intel_key and not os.environ.get('AZURE_DOC_INTEL_API_KEY'):
+                    config.doc_intel_api_key = saved_doc_intel_key
+                
+                # Update status
+                status_text = config.get_status_text()
+                status_label.config(text=status_text)
+                
+                if save_keys:
+                    messagebox.showinfo(
+                        "Saved",
+                        "Azure AI configuration saved successfully!\n\n"
+                        "⚠️ API keys are stored in the config file.\n"
+                        "Keep config/azure_ai.yaml secure!\n\n"
+                        "All tools will now use this configuration."
+                    )
+                else:
+                    messagebox.showinfo(
+                        "Saved",
+                        "Azure AI configuration saved successfully!\n\n"
+                        "Note: API keys were not saved to file.\n"
+                        "Use environment variables for API keys:\n"
+                        "• AZURE_OPENAI_API_KEY\n"
+                        "• AZURE_DOC_INTEL_API_KEY\n\n"
+                        "Or click Save again and choose to save keys."
+                    )
+            else:
+                messagebox.showerror("Error", "Failed to save configuration.")
+        
+        test_btn = ttk.Button(button_frame, text="Test Connection", command=test_connection)
+        test_btn.pack(side='left', padx=5)
+        
+        save_btn = ttk.Button(button_frame, text="Save", command=save_config)
+        save_btn.pack(side='left', padx=5)
+        
+        cancel_btn = ttk.Button(button_frame, text="Cancel", command=dialog.destroy)
+        cancel_btn.pack(side='right', padx=5)
     
     def on_close(self):
         """Handle window close - offer to close all tools"""

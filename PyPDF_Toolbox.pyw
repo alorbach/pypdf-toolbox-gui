@@ -79,7 +79,7 @@ def main():
             # Install requirements
             if requirements_file.exists():
                 subprocess.run(
-                    [str(python_exe), "-m", "pip", "install", "-q", "-r", str(requirements_file)],
+                    [str(python_exe), "-m", "pip", "install", "--upgrade", "-r", str(requirements_file)],
                     check=True,
                     creationflags=creation_flags
                 )
@@ -98,6 +98,20 @@ def main():
                 f"Unexpected error during setup:\n\n{e}"
             )
             return
+    else:
+        # Venv exists - check and update requirements
+        try:
+            if requirements_file.exists():
+                creation_flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+                subprocess.run(
+                    [str(python_exe), "-m", "pip", "install", "--upgrade", "-r", str(requirements_file)],
+                    check=False,  # Don't fail if some packages can't be installed
+                    creationflags=creation_flags,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL
+                )
+        except Exception:
+            pass  # Silently fail - launcher will check dependencies on startup
     
     # Verify everything exists
     if not launcher_script.exists():

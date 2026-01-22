@@ -54,7 +54,8 @@ class AzureAIConfig:
             },
             'settings': {
                 'prefer_env_vars': True,
-                'timeout': 60,
+                'timeout': 300,  # 5 minutes for large PDFs
+                'polling_timeout': 600,  # 10 minutes total for polling
                 'max_retries': 3
             }
         }
@@ -88,8 +89,11 @@ class AzureAIConfig:
                 base[key] = value
     
     def _load_env_vars(self, config):
-        """Load API keys from environment variables."""
-        # Azure OpenAI
+        """Load API keys from environment variables.
+        
+        Note: Environment variables only override if they exist. They don't clear existing values.
+        """
+        # Azure OpenAI - only override if env var exists
         if os.environ.get('AZURE_OPENAI_ENDPOINT'):
             config['azure_openai']['endpoint'] = os.environ['AZURE_OPENAI_ENDPOINT']
         if os.environ.get('AZURE_OPENAI_API_KEY'):
@@ -99,14 +103,23 @@ class AzureAIConfig:
         if os.environ.get('AZURE_OPENAI_API_VERSION'):
             config['azure_openai']['api_version'] = os.environ['AZURE_OPENAI_API_VERSION']
         
-        # Azure Document Intelligence
+        # Azure Document Intelligence - only override if env var exists
         if os.environ.get('AZURE_DOC_INTEL_ENDPOINT'):
             config['azure_document_intelligence']['endpoint'] = os.environ['AZURE_DOC_INTEL_ENDPOINT']
         if os.environ.get('AZURE_DOC_INTEL_API_KEY'):
             config['azure_document_intelligence']['api_key'] = os.environ['AZURE_DOC_INTEL_API_KEY']
     
-    def save_config(self):
-        """Save current configuration to file."""
+    def reload_config(self):
+        """Reload configuration from file and environment variables."""
+        self.config = self._load_config()
+    
+    def save_config(self, save_api_keys=False):
+        """Save current configuration to file.
+        
+        Args:
+            save_api_keys: If True, save API keys to file. If False, only save endpoints and settings.
+                          Default False for security, but can be set to True if user explicitly wants to save keys.
+        """
         if not YAML_AVAILABLE:
             print("[ERROR] PyYAML not installed. Cannot save config file.")
             return False
@@ -117,17 +130,20 @@ class AzureAIConfig:
         config_path.parent.mkdir(parents=True, exist_ok=True)
         
         try:
-            # Don't save API keys if they came from environment variables
+            # Check if API keys came from environment variables
+            openai_key_from_env = bool(os.environ.get('AZURE_OPENAI_API_KEY'))
+            doc_intel_key_from_env = bool(os.environ.get('AZURE_DOC_INTEL_API_KEY'))
+            
             save_config = {
                 'azure_openai': {
                     'endpoint': self.config['azure_openai']['endpoint'],
-                    'api_key': '',  # Don't save API keys
+                    'api_key': self.config['azure_openai']['api_key'] if (save_api_keys and not openai_key_from_env) else '',
                     'api_version': self.config['azure_openai']['api_version'],
                     'deployment_name': self.config['azure_openai']['deployment_name']
                 },
                 'azure_document_intelligence': {
                     'endpoint': self.config['azure_document_intelligence']['endpoint'],
-                    'api_key': ''  # Don't save API keys
+                    'api_key': self.config['azure_document_intelligence']['api_key'] if (save_api_keys and not doc_intel_key_from_env) else ''
                 },
                 'settings': self.config['settings']
             }
@@ -135,7 +151,14 @@ class AzureAIConfig:
             with open(config_path, 'w', encoding='utf-8') as f:
                 yaml.safe_dump(save_config, f, default_flow_style=False, indent=2)
             
-            print(f"[INFO] Saved Azure AI config to {config_path}")
+            if save_api_keys:
+                print(f"[INFO] Saved Azure AI config (including API keys) to {config_path}")
+                print("[WARNING] API keys are stored in plain text. Keep this file secure!")
+            else:
+                print(f"[INFO] Saved Azure AI config (endpoints only) to {config_path}")
+                if openai_key_from_env or doc_intel_key_from_env:
+                    print("[INFO] API keys from environment variables were not saved (as expected)")
+            
             return True
             
         except Exception as e:
@@ -193,7 +216,11 @@ class AzureAIConfig:
     
     @property
     def timeout(self):
-        return self.config['settings'].get('timeout', 60)
+        return self.config['settings'].get('timeout', 300)
+    
+    @property
+    def polling_timeout(self):
+        return self.config['settings'].get('polling_timeout', 600)
     
     @property
     def max_retries(self):

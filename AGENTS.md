@@ -669,6 +669,8 @@ Core dependencies (in requirements.txt):
 
 **All tools that use Azure AI APIs MUST share a common configuration file.**
 
+**Azure configuration is now centrally managed in the launcher GUI** - users can configure Azure AI settings once, and all tools will use the same configuration.
+
 ### Configuration File Location
 
 Azure AI configuration is stored in: `config/azure_ai.yaml`
@@ -842,14 +844,27 @@ For security, prefer environment variables over storing API keys in config files
 | `AZURE_DOC_INTEL_ENDPOINT` | Azure Document Intelligence endpoint |
 | `AZURE_DOC_INTEL_API_KEY` | Azure Document Intelligence API key |
 
-### Configuration UI
+### Launcher Integration
 
-Tools that require Azure AI should include a configuration button/menu that:
-1. Opens a dialog to edit the shared `config/azure_ai.yaml`
-2. Shows current configuration status (configured/not configured)
-3. Allows testing the connection
+The launcher GUI (`src/launcher_gui.py`) includes a **"⚙️ Azure"** button that opens a global Azure AI configuration dialog. This allows users to:
 
-Example configuration dialog:
+1. Configure Azure OpenAI settings (endpoint, API key, deployment, API version)
+2. Configure Azure Document Intelligence settings (endpoint, API key)
+3. View configuration status for both services
+4. Test connections
+5. Save configuration to `config/azure_ai.yaml`
+
+**All tools automatically use this shared configuration** - no need for individual tool configuration dialogs.
+
+### Configuration UI (For Tools)
+
+If a tool needs to show Azure configuration status or provide a quick link to the launcher's config:
+
+1. Show current configuration status (configured/not configured) using `AzureAIConfig.get_status_text()`
+2. Provide a button/link that opens the launcher's Azure config dialog (if accessible)
+3. Display helpful messages if Azure features are not configured
+
+Example configuration status display:
 
 ```python
 def show_azure_config_dialog(self):
@@ -883,6 +898,27 @@ def show_azure_config_dialog(self):
     ttk.Button(dialog, text="Save", command=save_config).pack(pady=10)
 ```
 
+### Window Positioning and Modal Dialogs
+
+**CRITICAL**: When creating child windows or dialogs:
+
+1. **Always pass parent window**: When creating dialogs from a tool, pass the parent window reference
+2. **Use Toplevel for child windows**: Use `tk.Toplevel(parent)` instead of `tk.Tk()` when there's a parent
+3. **Make dialogs modal**: Use `transient(parent)` and `grab_set()` to keep dialogs on top and modal
+4. **Ensure visibility**: Call `lift()` and `focus_force()` to ensure dialogs appear on top
+
+Example:
+```python
+def show_dialog(self):
+    """Show a modal dialog that stays on top of parent."""
+    dialog = tk.Toplevel(self.root)  # Use Toplevel, not Tk
+    dialog.transient(self.root)      # Associate with parent
+    dialog.grab_set()                # Make modal
+    dialog.lift()                    # Bring to front
+    dialog.focus_force()             # Focus
+    # ... dialog content ...
+```
+
 ### Important Notes
 
 1. **Never commit API keys** - Add `config/azure_ai.yaml` to `.gitignore`
@@ -890,6 +926,7 @@ def show_azure_config_dialog(self):
 3. **Validate on startup** - Check if configuration exists and is valid
 4. **Show clear errors** - If AI features are used but not configured, show helpful message
 5. **Graceful degradation** - Tools should work without AI features if not configured
+6. **Centralized configuration** - Use the launcher's Azure config button for global configuration
 
 ## Error Handling
 

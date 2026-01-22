@@ -39,8 +39,14 @@ if [ $? -ne 0 ]; then
 fi
 
 if [ -f "$ROOT_DIR/requirements.txt" ]; then
-    echo "[INFO] Installing/updating requirements..."
-    "$PYTHON_EXE" -m pip install -q -r "$ROOT_DIR/requirements.txt"
+    echo "[INFO] Installing/updating requirements from requirements.txt..."
+    "$PYTHON_EXE" -m pip install --upgrade -r "$ROOT_DIR/requirements.txt"
+    if [ $? -eq 0 ]; then
+        echo "[SUCCESS] All dependencies installed/updated."
+    else
+        echo "[WARNING] Some dependencies may have failed to install."
+        echo "[INFO] You can manually install with: pip install -r requirements.txt"
+    fi
 else
     echo "[WARNING] requirements.txt not found."
 fi

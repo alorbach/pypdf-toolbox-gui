@@ -423,9 +423,15 @@ def extract_text_azure(pdf_path, output_format='text', config=None):
             'Ocp-Apim-Subscription-Key': api_key,
         }
         
+        # Get timeout settings (default to longer for large PDFs)
+        request_timeout = config.timeout
+        polling_timeout = config.polling_timeout
+        max_polling_attempts = polling_timeout // 3  # Poll every 3 seconds
+        
         # Send PDF for analysis
+        logger.info(f"Submitting PDF to Azure AI (timeout: {request_timeout}s)...")
         with open(pdf_path, 'rb') as f:
-            response = requests.post(url, headers=headers, data=f, timeout=config.timeout)
+            response = requests.post(url, headers=headers, data=f, timeout=request_timeout)
         
         response.raise_for_status()
         operation_url = response.headers.get("Operation-Location")
@@ -433,27 +439,48 @@ def extract_text_azure(pdf_path, output_format='text', config=None):
         if not operation_url:
             raise Exception("No operation URL in response")
         
-        # Poll for results
-        logger.info("Waiting for Azure AI processing...")
+        # Poll for results with longer timeout
+        logger.info(f"Waiting for Azure AI processing (max {polling_timeout}s)...")
         status_headers = {'Ocp-Apim-Subscription-Key': api_key}
         
-        for attempt in range(60):  # Max 60 attempts (1 minute)
-            result = requests.get(operation_url, headers=status_headers, timeout=config.timeout)
-            result.raise_for_status()
-            result_json = result.json()
-            status = result_json.get('status', '')
+        start_time = time.time()
+        for attempt in range(max_polling_attempts):
+            # Check if we've exceeded total timeout
+            elapsed = time.time() - start_time
+            if elapsed > polling_timeout:
+                raise Exception(f"Azure AI processing timed out after {elapsed:.0f} seconds")
             
-            logger.debug(f"Status check {attempt + 1}: {status}")
+            try:
+                result = requests.get(operation_url, headers=status_headers, timeout=30)
+                result.raise_for_status()
+                result_json = result.json()
+                status = result_json.get('status', '')
+                
+                if attempt % 10 == 0 or status != 'running':  # Log every 10th attempt or status changes
+                    logger.info(f"Status check {attempt + 1}/{max_polling_attempts}: {status} (elapsed: {elapsed:.0f}s)")
+                else:
+                    logger.debug(f"Status check {attempt + 1}: {status}")
+                
+                if status == 'succeeded':
+                    logger.info(f"Azure AI processing completed in {elapsed:.0f} seconds")
+                    break
+                elif status == 'failed':
+                    error = result_json.get('error', {})
+                    raise Exception(f"Azure AI processing failed: {error.get('message', 'Unknown error')}")
+                
+            except requests.exceptions.Timeout:
+                logger.warning(f"Polling request {attempt + 1} timed out, retrying...")
+                continue
+            except requests.exceptions.RequestException as e:
+                logger.warning(f"Polling request {attempt + 1} failed: {e}, retrying...")
+                time.sleep(2)  # Wait a bit longer on error
+                continue
             
-            if status == 'succeeded':
-                break
-            elif status == 'failed':
-                error = result_json.get('error', {})
-                raise Exception(f"Azure AI processing failed: {error.get('message', 'Unknown error')}")
-            
-            time.sleep(1)
+            # Wait before next poll (3 seconds for large PDFs)
+            time.sleep(3)
         else:
-            raise Exception("Azure AI processing timed out")
+            elapsed = time.time() - start_time
+            raise Exception(f"Azure AI processing timed out after {elapsed:.0f} seconds ({max_polling_attempts} attempts)")
         
         # Process results
         analyze_result = result_json.get('analyzeResult', {})
@@ -698,8 +725,8 @@ class PDFTextExtractorApp:
             self.root = tk.Tk()
         
         self.root.title("PDF Text Extractor")
-        self.root.geometry("1000x750")
-        self.root.minsize(800, 600)
+        self.root.geometry("1000x480")
+        self.root.minsize(800, 450)
         self.root.resizable(True, True)
         
         # Position window
@@ -730,16 +757,16 @@ class PDFTextExtractorApp:
                 height = int(os.environ.get('TOOL_WINDOW_HEIGHT', 750))
                 
                 width = max(width, 800)
-                height = max(height, 600)
+                height = max(height, 450)  # Reduced minimum height
                 
                 self.root.geometry(f"{width}x{height}+{x}+{y}")
                 print(f"[INFO] Window positioned at {x},{y} with size {width}x{height}")
             else:
-                self.root.geometry("1000x750")
+                self.root.geometry("1000x480")
                 print("[INFO] Running standalone (not from launcher)")
         except (ValueError, TypeError) as e:
             print(f"[WARNING] Could not position window: {e}")
-            self.root.geometry("1000x750")
+            self.root.geometry("1000x480")
     
     def setup_ui(self):
         """Setup the main UI."""
@@ -747,7 +774,7 @@ class PDFTextExtractorApp:
         self.root.grid_columnconfigure(0, weight=1)
         
         main_frame = tk.Frame(self.root, bg=UIColors.BG_SECONDARY)
-        main_frame.grid(row=0, column=0, sticky="nsew", padx=UISpacing.MD, pady=UISpacing.MD)
+        main_frame.grid(row=0, column=0, sticky="nsew", padx=UISpacing.SM, pady=UISpacing.SM)
         main_frame.grid_rowconfigure(4, weight=1)
         main_frame.grid_columnconfigure(0, weight=1)
         
@@ -774,8 +801,8 @@ class PDFTextExtractorApp:
     
     def create_header(self, parent):
         """Create header section."""
-        header_frame = tk.Frame(parent, bg=UIColors.BG_PRIMARY, pady=UISpacing.MD)
-        header_frame.grid(row=0, column=0, sticky="ew", pady=(0, UISpacing.MD))
+        header_frame = tk.Frame(parent, bg=UIColors.BG_PRIMARY, pady=UISpacing.XS)
+        header_frame.grid(row=0, column=0, sticky="ew", pady=(0, UISpacing.XS))
         header_frame.grid_columnconfigure(0, weight=1)
         
         title_label = tk.Label(
@@ -785,7 +812,7 @@ class PDFTextExtractorApp:
             bg=UIColors.BG_PRIMARY,
             fg=UIColors.PRIMARY
         )
-        title_label.grid(row=0, column=0, pady=(UISpacing.SM, UISpacing.XS))
+        title_label.grid(row=0, column=0, pady=(UISpacing.XS, 0))
         
         desc_label = tk.Label(
             header_frame,
@@ -794,7 +821,7 @@ class PDFTextExtractorApp:
             bg=UIColors.BG_PRIMARY,
             fg=UIColors.TEXT_SECONDARY
         )
-        desc_label.grid(row=1, column=0, pady=(0, UISpacing.SM))
+        desc_label.grid(row=1, column=0, pady=(0, UISpacing.XS))
     
     def create_drop_zone(self, parent):
         """Create drop zone for files."""
@@ -803,50 +830,35 @@ class PDFTextExtractorApp:
             bg=UIColors.DROP_ZONE_BG,
             bd=2,
             relief="flat",
-            padx=UISpacing.XL,
-            pady=UISpacing.LG
+            padx=UISpacing.MD,
+            pady=UISpacing.SM
         )
-        self.drop_frame.grid(row=1, column=0, sticky="ew", pady=UISpacing.SM)
+        self.drop_frame.grid(row=1, column=0, sticky="ew", pady=UISpacing.XS)
         self.drop_frame.config(
             highlightbackground=UIColors.DROP_ZONE_BORDER,
             highlightthickness=2
         )
         
-        icon_label = tk.Label(
-            self.drop_frame,
-            text="📄",
-            font=("Segoe UI", 28),
-            bg=UIColors.DROP_ZONE_BG
-        )
-        icon_label.pack(pady=(UISpacing.XS, UISpacing.XS))
-        
-        main_text = "Drag and drop PDF files here" if DND_AVAILABLE else "Click to select PDF files"
+        # Compact drop zone - single line with icon
+        main_text = "📄 Drag and drop PDF files here" if DND_AVAILABLE else "📄 Click to select PDF files"
+        if DND_AVAILABLE:
+            main_text += " or click to browse"
         
         self.drop_label = tk.Label(
             self.drop_frame,
             text=main_text,
-            font=UIFonts.SUBTITLE,
+            font=UIFonts.BODY,
             bg=UIColors.DROP_ZONE_BG,
             fg=UIColors.TEXT_PRIMARY,
             cursor="hand2"
         )
-        self.drop_label.pack()
-        
-        sub_label = tk.Label(
-            self.drop_frame,
-            text="or click to browse",
-            font=UIFonts.SMALL,
-            bg=UIColors.DROP_ZONE_BG,
-            fg=UIColors.TEXT_MUTED,
-            cursor="hand2"
-        )
-        sub_label.pack(pady=(UISpacing.XS, UISpacing.XS))
+        self.drop_label.pack(pady=UISpacing.XS)
         
         # Click handlers
-        for widget in [self.drop_frame, icon_label, self.drop_label, sub_label]:
+        for widget in [self.drop_frame, self.drop_label]:
             widget.bind('<Button-1>', lambda e: self.select_files())
         
-        self._drop_zone_widgets = [self.drop_frame, icon_label, self.drop_label, sub_label]
+        self._drop_zone_widgets = [self.drop_frame, self.drop_label]
     
     def create_options_panel(self, parent):
         """Create options panel."""
@@ -859,7 +871,7 @@ class PDFTextExtractorApp:
             bd=1,
             relief="solid"
         )
-        options_frame.grid(row=2, column=0, sticky="ew", pady=UISpacing.SM)
+        options_frame.grid(row=2, column=0, sticky="ew", pady=UISpacing.XS)
         options_frame.grid_columnconfigure(1, weight=1)
         options_frame.grid_columnconfigure(3, weight=1)
         
@@ -879,11 +891,20 @@ class PDFTextExtractorApp:
         methods = [
             ("Python (PyMuPDF)", "python", PYMUPDF_AVAILABLE),
             ("OCR (Scanned PDFs)", "ocr", OCRMYPDF_AVAILABLE),
-            ("Azure AI", "azure", AZURE_CONFIG_AVAILABLE and self.azure_config and self.azure_config.is_doc_intel_configured())
+            ("Azure AI", "azure", True)  # Always allow selection, check configuration when processing
         ]
         
         for text, value, available in methods:
-            state = "normal" if available else "disabled"
+            # Azure is always selectable, but may show as not configured
+            if value == "azure":
+                is_configured = AZURE_CONFIG_AVAILABLE and self.azure_config and self.azure_config.is_doc_intel_configured()
+                state = "normal"
+                fg_color = UIColors.TEXT_PRIMARY if is_configured else UIColors.TEXT_SECONDARY
+            else:
+                is_configured = available
+                state = "normal" if available else "disabled"
+                fg_color = UIColors.TEXT_PRIMARY if available else UIColors.TEXT_MUTED
+            
             rb = tk.Radiobutton(
                 method_frame,
                 text=text,
@@ -891,7 +912,7 @@ class PDFTextExtractorApp:
                 value=value,
                 font=UIFonts.BODY,
                 bg=UIColors.BG_PRIMARY,
-                fg=UIColors.TEXT_PRIMARY if available else UIColors.TEXT_MUTED,
+                fg=fg_color,
                 state=state
             )
             rb.pack(side=tk.LEFT, padx=(0, UISpacing.MD))
@@ -933,15 +954,7 @@ class PDFTextExtractorApp:
         )
         force_cb.grid(row=1, column=0, columnspan=2, padx=UISpacing.SM, pady=UISpacing.SM, sticky="w")
         
-        # Azure config button
-        if AZURE_CONFIG_AVAILABLE:
-            config_btn = create_rounded_button(
-                options_frame,
-                "⚙️ Azure Config",
-                self.show_azure_config_dialog,
-                style="ghost"
-            )
-            config_btn.grid(row=1, column=3, padx=UISpacing.SM, pady=UISpacing.SM, sticky="e")
+        # Azure config button removed - configuration is now managed in the launcher
     
     def create_results_area(self, parent):
         """Create results text area."""
@@ -954,7 +967,7 @@ class PDFTextExtractorApp:
             bd=1,
             relief="solid"
         )
-        result_frame.grid(row=4, column=0, sticky="nsew", pady=UISpacing.SM)
+        result_frame.grid(row=4, column=0, sticky="nsew", pady=UISpacing.XS)
         result_frame.grid_rowconfigure(0, weight=1)
         result_frame.grid_columnconfigure(0, weight=1)
         
@@ -965,15 +978,16 @@ class PDFTextExtractorApp:
             bg=UIColors.BG_SECONDARY,
             fg=UIColors.TEXT_PRIMARY,
             relief="flat",
-            padx=UISpacing.MD,
-            pady=UISpacing.SM
+            padx=UISpacing.SM,
+            pady=UISpacing.XS,
+            height=4  # Further reduced to make window shorter
         )
-        self.result_text.grid(row=0, column=0, sticky="nsew", padx=UISpacing.SM, pady=UISpacing.SM)
+        self.result_text.grid(row=0, column=0, sticky="nsew", padx=UISpacing.XS, pady=UISpacing.XS)
     
     def create_button_frame(self, parent):
         """Create button frame."""
         button_frame = tk.Frame(parent, bg=UIColors.BG_SECONDARY)
-        button_frame.grid(row=5, column=0, pady=UISpacing.MD)
+        button_frame.grid(row=5, column=0, pady=UISpacing.XS)
         
         select_files_btn = create_rounded_button(
             button_frame,
@@ -1118,76 +1132,94 @@ class PDFTextExtractorApp:
             messagebox.showerror("Error", "OCRmyPDF not available. Install with: pip install ocrmypdf")
             return
         elif method == 'azure' and (not self.azure_config or not self.azure_config.is_doc_intel_configured()):
-            messagebox.showerror("Error", "Azure AI not configured. Configure in Options.")
+            messagebox.showinfo(
+                "Azure AI Not Configured",
+                "Azure AI is not configured.\n\n"
+                "To configure Azure AI:\n"
+                "1. Go to the PyPDF Toolbox launcher window\n"
+                "2. Click the '⚙️ Azure' button\n"
+                "3. Enter your Azure Document Intelligence credentials\n"
+                "4. Click 'Save'\n\n"
+                "All tools will automatically use the shared configuration."
+            )
             return
         
-        self.result_text.insert(tk.END, f"\n{'='*60}\n")
-        self.result_text.insert(tk.END, f"Processing {len(files)} PDF file(s)\n")
-        self.result_text.insert(tk.END, f"Method: {method.upper()} | Format: {output_format.upper()}\n")
-        self.result_text.insert(tk.END, f"{'='*60}\n\n")
-        auto_scroll_text_widget(self.result_text)
+        # Set wait cursor for entire window
+        self.root.config(cursor="wait")
+        self.root.update()  # Force cursor update
         
-        successful = 0
-        skipped = 0
-        failed = 0
-        
-        for i, pdf_path in enumerate(files, 1):
-            self.result_text.insert(tk.END, f"[{i}/{len(files)}] {os.path.basename(pdf_path)}\n")
+        try:
+            self.result_text.insert(tk.END, f"\n{'='*60}\n")
+            self.result_text.insert(tk.END, f"Processing {len(files)} PDF file(s)\n")
+            self.result_text.insert(tk.END, f"Method: {method.upper()} | Format: {output_format.upper()}\n")
+            self.result_text.insert(tk.END, f"{'='*60}\n\n")
             auto_scroll_text_widget(self.result_text)
             
-            try:
-                result = process_pdf_file(
-                    pdf_path,
-                    method=method,
-                    output_format=output_format,
-                    force=force,
-                    azure_config=self.azure_config
-                )
+            successful = 0
+            skipped = 0
+            failed = 0
+            
+            for i, pdf_path in enumerate(files, 1):
+                self.result_text.insert(tk.END, f"[{i}/{len(files)}] {os.path.basename(pdf_path)}\n")
+                auto_scroll_text_widget(self.result_text)
                 
-                if result['success']:
-                    if result.get('skipped'):
-                        self.result_text.insert(tk.END, f"  ⏭ Skipped (output exists)\n")
-                        skipped += 1
-                    else:
-                        self.result_text.insert(tk.END, f"  ✓ Saved: {result['output']}\n")
-                        successful += 1
-                else:
-                    self.result_text.insert(tk.END, f"  ✗ Error: {result.get('error', 'Unknown')}\n")
-                    failed += 1
+                try:
+                    result = process_pdf_file(
+                        pdf_path,
+                        method=method,
+                        output_format=output_format,
+                        force=force,
+                        azure_config=self.azure_config
+                    )
                     
-            except Exception as e:
-                self.result_text.insert(tk.END, f"  ✗ Error: {str(e)}\n")
-                failed += 1
+                    if result['success']:
+                        if result.get('skipped'):
+                            self.result_text.insert(tk.END, f"  ⏭ Skipped (output exists)\n")
+                            skipped += 1
+                        else:
+                            self.result_text.insert(tk.END, f"  ✓ Saved: {result['output']}\n")
+                            successful += 1
+                    else:
+                        self.result_text.insert(tk.END, f"  ✗ Error: {result.get('error', 'Unknown')}\n")
+                        failed += 1
+                        
+                except Exception as e:
+                    self.result_text.insert(tk.END, f"  ✗ Error: {str(e)}\n")
+                    failed += 1
+                
+                auto_scroll_text_widget(self.result_text)
             
+            # Summary
+            self.result_text.insert(tk.END, f"\n{'='*60}\n")
+            self.result_text.insert(tk.END, f"SUMMARY\n")
+            self.result_text.insert(tk.END, f"{'='*60}\n")
+            self.result_text.insert(tk.END, f"Total: {len(files)} | ")
+            self.result_text.insert(tk.END, f"✓ Success: {successful} | ")
+            self.result_text.insert(tk.END, f"⏭ Skipped: {skipped} | ")
+            self.result_text.insert(tk.END, f"✗ Failed: {failed}\n")
+            self.result_text.insert(tk.END, f"{'='*60}\n\n")
             auto_scroll_text_widget(self.result_text)
-        
-        # Summary
-        self.result_text.insert(tk.END, f"\n{'='*60}\n")
-        self.result_text.insert(tk.END, f"SUMMARY\n")
-        self.result_text.insert(tk.END, f"{'='*60}\n")
-        self.result_text.insert(tk.END, f"Total: {len(files)} | ")
-        self.result_text.insert(tk.END, f"✓ Success: {successful} | ")
-        self.result_text.insert(tk.END, f"⏭ Skipped: {skipped} | ")
-        self.result_text.insert(tk.END, f"✗ Failed: {failed}\n")
-        self.result_text.insert(tk.END, f"{'='*60}\n\n")
-        auto_scroll_text_widget(self.result_text)
-        
-        # Show summary dialog
-        if failed == 0:
-            messagebox.showinfo(
-                "Complete",
-                f"Processed {len(files)} file(s).\n\n"
-                f"✓ Success: {successful}\n"
-                f"⏭ Skipped: {skipped}"
-            )
-        else:
-            messagebox.showwarning(
-                "Complete with Errors",
-                f"Processed {len(files)} file(s).\n\n"
-                f"✓ Success: {successful}\n"
-                f"⏭ Skipped: {skipped}\n"
-                f"✗ Failed: {failed}"
-            )
+            
+            # Show summary dialog
+            if failed == 0:
+                messagebox.showinfo(
+                    "Complete",
+                    f"Processed {len(files)} file(s).\n\n"
+                    f"✓ Success: {successful}\n"
+                    f"⏭ Skipped: {skipped}"
+                )
+            else:
+                messagebox.showwarning(
+                    "Complete with Errors",
+                    f"Processed {len(files)} file(s).\n\n"
+                    f"✓ Success: {successful}\n"
+                    f"⏭ Skipped: {skipped}\n"
+                    f"✗ Failed: {failed}"
+                )
+        finally:
+            # Always restore cursor
+            self.root.config(cursor="")
+            self.root.update()
     
     def clear_results(self):
         """Clear results text."""
@@ -1197,168 +1229,31 @@ class PDFTextExtractorApp:
     def show_welcome_message(self):
         """Show welcome message."""
         self.result_text.insert(tk.END, "Welcome to PDF Text Extractor!\n")
-        self.result_text.insert(tk.END, "━" * 45 + "\n\n")
+        self.result_text.insert(tk.END, "━" * 45 + "\n")
         
-        self.result_text.insert(tk.END, "📋 Extraction Methods:\n\n")
-        
+        self.result_text.insert(tk.END, "📋 Methods: ")
+        methods = []
         if PYMUPDF_AVAILABLE:
-            self.result_text.insert(tk.END, "  ✓ Python (PyMuPDF) - Fast, works offline\n")
+            methods.append("✓ Python")
         else:
-            self.result_text.insert(tk.END, "  ✗ Python - Install: pip install pymupdf\n")
-        
+            methods.append("✗ Python")
         if OCRMYPDF_AVAILABLE:
-            self.result_text.insert(tk.END, "  ✓ OCR - For scanned documents\n")
+            methods.append("✓ OCR")
         else:
-            self.result_text.insert(tk.END, "  ✗ OCR - Install: pip install ocrmypdf\n")
-        
+            methods.append("✗ OCR")
         if AZURE_CONFIG_AVAILABLE and self.azure_config and self.azure_config.is_doc_intel_configured():
-            self.result_text.insert(tk.END, "  ✓ Azure AI - High-quality extraction\n")
+            methods.append("✓ Azure AI")
         else:
-            self.result_text.insert(tk.END, "  ✗ Azure AI - Configure in Options\n")
+            methods.append("✗ Azure AI (configure in launcher)")
+        self.result_text.insert(tk.END, " | ".join(methods) + "\n")
         
-        self.result_text.insert(tk.END, "\n📄 Output Formats:\n\n")
-        self.result_text.insert(tk.END, "  • Text (.txt) - Plain text\n")
-        self.result_text.insert(tk.END, "  • Markdown (.md) - Formatted text\n")
-        self.result_text.insert(tk.END, "  • JSON - Structured data\n\n")
+        self.result_text.insert(tk.END, "📄 Formats: Text | Markdown | JSON\n")
         
         if DND_AVAILABLE:
-            self.result_text.insert(tk.END, "💡 Drag and drop PDF files to begin.\n\n")
+            self.result_text.insert(tk.END, "💡 Drag and drop PDF files to begin.\n")
         else:
             self.result_text.insert(tk.END, "💡 Click 'Select PDF Files' to begin.\n")
-            self.result_text.insert(tk.END, "   Install tkinterdnd2 for drag & drop.\n\n")
     
-    def show_azure_config_dialog(self):
-        """Show Azure configuration dialog."""
-        dialog = tk.Toplevel(self.root)
-        dialog.title("Azure AI Configuration")
-        dialog.geometry("550x450")
-        dialog.transient(self.root)
-        dialog.grab_set()
-        dialog.configure(bg=UIColors.BG_SECONDARY)
-        
-        # Center on parent
-        dialog.update_idletasks()
-        x = self.root.winfo_x() + (self.root.winfo_width() - 550) // 2
-        y = self.root.winfo_y() + (self.root.winfo_height() - 450) // 2
-        dialog.geometry(f"+{x}+{y}")
-        
-        main_frame = tk.Frame(dialog, bg=UIColors.BG_SECONDARY, padx=UISpacing.LG, pady=UISpacing.LG)
-        main_frame.pack(fill="both", expand=True)
-        
-        # Title
-        tk.Label(
-            main_frame,
-            text="⚙️ Azure Document Intelligence Configuration",
-            font=UIFonts.SUBTITLE,
-            bg=UIColors.BG_SECONDARY,
-            fg=UIColors.TEXT_PRIMARY
-        ).pack(pady=(0, UISpacing.MD))
-        
-        # Document Intelligence section
-        doc_frame = tk.LabelFrame(
-            main_frame,
-            text="  Azure Document Intelligence  ",
-            font=UIFonts.HEADING,
-            bg=UIColors.BG_PRIMARY,
-            fg=UIColors.TEXT_PRIMARY,
-            padx=UISpacing.MD,
-            pady=UISpacing.SM
-        )
-        doc_frame.pack(fill="x", pady=UISpacing.SM)
-        
-        # Endpoint
-        tk.Label(
-            doc_frame,
-            text="Endpoint:",
-            font=UIFonts.BODY_BOLD,
-            bg=UIColors.BG_PRIMARY,
-            fg=UIColors.TEXT_PRIMARY
-        ).grid(row=0, column=0, sticky="w", pady=UISpacing.XS)
-        
-        endpoint_var = tk.StringVar(value=self.azure_config.doc_intel_endpoint if self.azure_config else "")
-        endpoint_entry = tk.Entry(doc_frame, textvariable=endpoint_var, width=50, font=UIFonts.BODY)
-        endpoint_entry.grid(row=0, column=1, padx=UISpacing.SM, pady=UISpacing.XS)
-        
-        # API Key
-        tk.Label(
-            doc_frame,
-            text="API Key:",
-            font=UIFonts.BODY_BOLD,
-            bg=UIColors.BG_PRIMARY,
-            fg=UIColors.TEXT_PRIMARY
-        ).grid(row=1, column=0, sticky="w", pady=UISpacing.XS)
-        
-        key_var = tk.StringVar(value=self.azure_config.doc_intel_api_key if self.azure_config else "")
-        key_entry = tk.Entry(doc_frame, textvariable=key_var, width=50, font=UIFonts.BODY, show="*")
-        key_entry.grid(row=1, column=1, padx=UISpacing.SM, pady=UISpacing.XS)
-        
-        # Status
-        status_text = ""
-        if self.azure_config:
-            status_text = self.azure_config.get_status_text()
-        else:
-            status_text = "Azure configuration not loaded"
-        
-        status_label = tk.Label(
-            main_frame,
-            text=status_text,
-            font=UIFonts.SMALL,
-            bg=UIColors.BG_SECONDARY,
-            fg=UIColors.TEXT_SECONDARY,
-            justify="left"
-        )
-        status_label.pack(pady=UISpacing.MD, anchor="w")
-        
-        # Info
-        info_frame = tk.Frame(main_frame, bg=UIColors.WARNING_LIGHT, padx=UISpacing.MD, pady=UISpacing.SM)
-        info_frame.pack(fill="x", pady=UISpacing.SM)
-        
-        tk.Label(
-            info_frame,
-            text="💡 You can also set environment variables:\n"
-                 "   AZURE_DOC_INTEL_ENDPOINT, AZURE_DOC_INTEL_API_KEY",
-            font=UIFonts.SMALL,
-            bg=UIColors.WARNING_LIGHT,
-            fg=UIColors.TEXT_PRIMARY,
-            justify="left"
-        ).pack(anchor="w")
-        
-        # Buttons
-        btn_frame = tk.Frame(main_frame, bg=UIColors.BG_SECONDARY)
-        btn_frame.pack(pady=UISpacing.MD)
-        
-        def save_config():
-            if self.azure_config:
-                self.azure_config.doc_intel_endpoint = endpoint_var.get()
-                self.azure_config.doc_intel_api_key = key_var.get()
-                self.azure_config.save_config()
-                messagebox.showinfo("Saved", "Configuration saved.")
-                # Update status bar
-                self.update_status_bar()
-            dialog.destroy()
-        
-        def test_connection():
-            if not endpoint_var.get() or not key_var.get():
-                messagebox.showwarning("Missing", "Please enter endpoint and API key.")
-                return
-            
-            try:
-                url = f"{endpoint_var.get().rstrip('/')}/formrecognizer/documentModels?api-version=2023-07-31"
-                headers = {'Ocp-Apim-Subscription-Key': key_var.get()}
-                response = requests.get(url, headers=headers, timeout=10)
-                response.raise_for_status()
-                messagebox.showinfo("Success", "Connection successful!")
-            except Exception as e:
-                messagebox.showerror("Failed", f"Connection failed:\n{str(e)}")
-        
-        test_btn = create_rounded_button(btn_frame, "Test Connection", test_connection, style="secondary")
-        test_btn.pack(side=tk.LEFT, padx=UISpacing.SM)
-        
-        save_btn = create_rounded_button(btn_frame, "Save", save_config, style="success")
-        save_btn.pack(side=tk.LEFT, padx=UISpacing.SM)
-        
-        cancel_btn = create_rounded_button(btn_frame, "Cancel", dialog.destroy, style="ghost")
-        cancel_btn.pack(side=tk.LEFT, padx=UISpacing.SM)
     
     def update_status_bar(self):
         """Update the status bar."""

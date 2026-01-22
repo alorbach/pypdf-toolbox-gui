@@ -6,6 +6,7 @@ A collection of Python-based PDF utility tools with a unified graphical launcher
 
 - **Slim Launcher Bar**: A compact, always-on-top toolbar that stays at the top of your screen
 - **Individual Tool Windows**: Each PDF tool opens in its own window positioned below the launcher
+- **Global Azure AI Configuration**: Configure Azure AI services once in the launcher, all tools use the same settings
 - **Cross-Platform**: Works on Windows, macOS, and Linux
 - **Virtual Environment**: Automatically creates and manages a Python virtual environment
 - **Easy Extension**: Add new tools by simply creating `launch_*.bat`/`launch_*.sh` scripts
@@ -50,6 +51,46 @@ A collection of Python-based PDF utility tools with a unified graphical launcher
 - Python 3.8 or higher
 - Tkinter (usually included with Python)
 - For OCR functionality: Tesseract OCR installed on your system
+- For Azure AI features: Azure OpenAI and/or Azure Document Intelligence subscription
+
+## Azure AI Configuration
+
+The launcher includes a global Azure AI configuration dialog accessible via the **"⚙️ Azure"** button. This allows you to configure:
+
+- **Azure OpenAI**: Endpoint, API key, deployment name, and API version
+- **Azure Document Intelligence**: Endpoint and API key
+
+### Configuration Methods
+
+1. **Via Launcher GUI** (Recommended):
+   - Click the **"⚙️ Azure"** button in the launcher
+   - Enter your Azure credentials
+   - Click "Save" to store settings in `config/azure_ai.yaml`
+
+2. **Via Environment Variables**:
+   ```bash
+   # Azure OpenAI
+   export AZURE_OPENAI_ENDPOINT="https://your-resource.openai.azure.com/"
+   export AZURE_OPENAI_API_KEY="your-api-key"
+   export AZURE_OPENAI_DEPLOYMENT="gpt-4"
+   export AZURE_OPENAI_API_VERSION="2024-02-15-preview"
+   
+   # Azure Document Intelligence
+   export AZURE_DOC_INTEL_ENDPOINT="https://your-resource.cognitiveservices.azure.com/"
+   export AZURE_DOC_INTEL_API_KEY="your-api-key"
+   ```
+
+3. **Via Config File**:
+   - Copy `config/azure_ai.yaml.template` to `config/azure_ai.yaml`
+   - Edit the file with your credentials
+
+**Note**: Environment variables take precedence over the config file. This is the recommended method for production environments.
+
+### Security
+
+- The `config/azure_ai.yaml` file is in `.gitignore` and will not be committed to version control
+- API keys stored in the config file are not saved when using environment variables
+- Always use environment variables in production environments
 
 ## Adding New Tools
 

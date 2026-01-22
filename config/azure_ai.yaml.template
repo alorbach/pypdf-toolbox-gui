@@ -29,8 +29,13 @@ settings:
   # If true, environment variables take precedence over values in this file
   prefer_env_vars: true
   
-  # Timeout for API calls in seconds
-  timeout: 60
+  # Timeout for initial API requests in seconds (default: 300 = 5 minutes)
+  # Increase for very large PDFs
+  timeout: 300
+  
+  # Total timeout for polling Azure Document Intelligence results in seconds
+  # (default: 600 = 10 minutes). Large PDFs may take longer to process.
+  polling_timeout: 600
   
   # Maximum retries for failed API calls
   max_retries: 3
