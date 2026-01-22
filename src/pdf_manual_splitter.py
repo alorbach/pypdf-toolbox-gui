@@ -1070,7 +1070,17 @@ class ManualSplitDialog:
         output_entry.grid(row=0, column=1, sticky="ew", padx=UISpacing.SM, pady=UISpacing.SM, ipady=UISpacing.XS)
         
         def browse_output_folder():
-            folder = filedialog.askdirectory(title="Select output folder for split PDFs")
+            # Use PDF file directory as initial directory
+            initial_dir = None
+            if self.pdf_path:
+                initial_dir = os.path.dirname(os.path.abspath(self.pdf_path))
+            elif os.path.exists(os.getcwd()):
+                initial_dir = os.getcwd()
+            
+            folder = filedialog.askdirectory(
+                title="Select output folder for split PDFs",
+                initialdir=initial_dir
+            )
             if folder:
                 self.output_folder_var.set(folder)
         

@@ -329,7 +329,7 @@ class PDFToolLauncher:
         # Azure AI Configuration button (always show, will handle error in dialog if needed)
         azure_btn = ttk.Button(
             right_frame,
-            text="⚙️ Azure",
+            text="⚙️ AI Config",
             command=self.show_azure_config,
             width=8
         )

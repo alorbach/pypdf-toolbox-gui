@@ -920,11 +920,19 @@ class PDFCombinerApp:
             messagebox.showwarning("No Selection", "Please select pages to combine")
             return
         
+        # Determine initial directory from first input file or use current working directory
+        initial_dir = None
+        if self.pdf_files and len(self.pdf_files) > 0:
+            initial_dir = os.path.dirname(os.path.abspath(self.pdf_files[0]))
+        elif os.path.exists(os.getcwd()):
+            initial_dir = os.getcwd()
+        
         # Get save location
         output_path = filedialog.asksaveasfilename(
             title="Save Combined PDF",
             defaultextension=".pdf",
-            filetypes=[("PDF files", "*.pdf"), ("All Files", "*.*")]
+            filetypes=[("PDF files", "*.pdf"), ("All Files", "*.*")],
+            initialdir=initial_dir
         )
         
         if not output_path:
