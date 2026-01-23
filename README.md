@@ -55,11 +55,27 @@ A collection of Python-based PDF utility tools with a unified graphical launcher
 
 ## Quick Start
 
-### Windows
+### Windows - Python Scripts
 
 1. Double-click `launcher.bat`
 2. The launcher will automatically create a virtual environment on first run
 3. Click on any tool button to launch that tool
+
+### Windows - Standalone Executable
+
+**Build a single executable that doesn't require Python:**
+
+1. Follow the step-by-step guide in [INSTALLATION.md](INSTALLATION.md)
+2. Run `build_executable.bat` to create `PyPDF_Toolbox.exe`
+3. Use the executable without installing Python or dependencies
+
+See [INSTALLATION.md](INSTALLATION.md) for detailed instructions on building and using the Windows executable.
+
+## Releases
+
+- **Download**: Grab the latest Windows EXE from the GitHub Releases page.
+- **Verify**: Each release includes a SHA256 checksum file for the ZIP.
+- **Build in CI**: Releases are produced by GitHub Actions on `v*` tags.
 
 ### Linux / macOS
 
@@ -70,10 +86,18 @@ A collection of Python-based PDF utility tools with a unified graphical launcher
 
 ## Requirements
 
+### For Python Scripts (Development/Standard Use)
+
 - Python 3.8 or higher
 - Tkinter (usually included with Python)
 - For OCR functionality: Tesseract OCR installed on your system
 - For Azure AI features: Azure OpenAI and/or Azure Document Intelligence subscription
+
+### For Standalone Executable (Windows)
+
+- **To build**: Python 3.8+ (see [INSTALLATION.md](INSTALLATION.md))
+- **To run**: Windows 10+ only (no Python required)
+- Optional: Tesseract OCR and Poppler for full feature support (see [INSTALLATION.md](INSTALLATION.md))
 
 ## Azure AI Configuration
 
@@ -140,7 +164,7 @@ Tools can read these environment variables to position themselves in the availab
 @echo off
 setlocal
 set SCRIPT_DIR=%~dp0
-set VENV_DIR=%SCRIPT_DIR%\venv
+set VENV_DIR=%SCRIPT_DIR%\.venv
 set PYTHON_EXE=%VENV_DIR%\Scripts\python.exe
 "%PYTHON_EXE%" "%SCRIPT_DIR%\src\pdf_split.py"
 endlocal
@@ -151,7 +175,7 @@ endlocal
 ```bash
 #!/bin/bash
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-VENV_DIR="$SCRIPT_DIR/venv"
+VENV_DIR="$SCRIPT_DIR/.venv"
 "$VENV_DIR/bin/python" "$SCRIPT_DIR/src/pdf_split.py"
 ```
 
@@ -161,15 +185,21 @@ VENV_DIR="$SCRIPT_DIR/venv"
 pypdf-toolbox-gui/
 ├── launcher.bat          # Windows launcher script
 ├── launcher.sh           # Linux/macOS launcher script
-├── requirements.txt      # Python dependencies
+├── build_executable.bat  # Build script for Windows executable
+├── PyPDF_Toolbox.py      # Unified entry point for executable
+├── PyPDF_Toolbox.spec    # PyInstaller spec file
+├── requirements.txt      # Python dependencies (includes PyInstaller for building)
 ├── README.md            # This file
+├── INSTALLATION.md      # Complete executable build and installation guide
 ├── LICENSE              # Apache 2.0 License
 ├── launch_pdf_*.bat     # Individual tool launchers (Windows)
 ├── launch_pdf_*.sh      # Individual tool launchers (Linux/macOS)
+├── build/               # Build artifacts (temporary)
+├── dist/                # Output directory (executable after build)
 ├── src/
 │   ├── launcher_gui.py  # Main launcher GUI
 │   └── (tool scripts)   # Individual PDF tool scripts
-└── venv/                # Virtual environment (auto-created)
+└── .venv/               # Virtual environment (auto-created)
 ```
 
 ## License

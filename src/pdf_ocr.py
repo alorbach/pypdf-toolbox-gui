@@ -216,6 +216,26 @@ def process_pdf_with_ocr(pdf_path: str, language: str = 'eng', output_callback=N
         return False
     
     try:
+        # In frozen (exe) mode, avoid spawning sys.executable which relaunches the app.
+        if getattr(sys, 'frozen', False):
+            try:
+                ocrmypdf.ocr(
+                    pdf_path,
+                    pdf_path,
+                    skip_text=True,
+                    output_type='pdf',
+                    language=language
+                )
+                return True
+            except Exception as e:
+                error_msg = str(e)
+                if "already contains OCR text" in error_msg.lower() or "already has text" in error_msg.lower():
+                    return True
+                if output_callback:
+                    output_callback(f"Error: {error_msg}")
+                print(f"Error processing {pdf_path}: {error_msg}")
+                return False
+
         # Use subprocess to capture ocrmypdf output in real-time
         # This allows us to display progress in the GUI
         cmd = [
@@ -920,6 +940,10 @@ class PDFOCRTool:
 
 def install_missing_dependencies():
     """Automatically install missing dependencies"""
+    if getattr(sys, 'frozen', False):
+        print("[INFO] Running as executable - skipping auto-install of dependencies.")
+        return False
+
     missing_deps = []
     
     if not OCRMYPDF_AVAILABLE:

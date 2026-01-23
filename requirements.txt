@@ -35,3 +35,6 @@ python-docx>=1.1.0  # DOCX export support
 html2text>=2024.2.26  # HTML to text conversion (optional)
 tkinterweb>=3.0.0  # Embedded HTML browser widget for preview
 # weasyprint>=60.0  # Alternative PDF generation (optional, has system dependencies)
+
+# Build-time requirements (for creating executables)
+pyinstaller>=6.0.0  # For building Windows executables

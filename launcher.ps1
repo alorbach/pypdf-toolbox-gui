@@ -10,7 +10,7 @@ $ErrorActionPreference = "Stop"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 
 # Paths
-$VenvDir = Join-Path $ScriptDir "venv"
+$VenvDir = Join-Path $ScriptDir ".venv"
 $PythonExe = Join-Path $VenvDir "Scripts\python.exe"
 $PythonwExe = Join-Path $VenvDir "Scripts\pythonw.exe"
 $LauncherScript = Join-Path $ScriptDir "src\launcher_gui.py"

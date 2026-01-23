@@ -1,0 +1,50 @@
+name: Release Windows EXE
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build-release:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: "pip"
+
+      - name: Build executable (CI mode)
+        shell: pwsh
+        run: .\build_executable.ps1 -CI
+
+      - name: Package release assets
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}"
+          $zipName = "PyPDF_Toolbox-$version-win64.zip"
+          $zipPath = Join-Path $env:GITHUB_WORKSPACE $zipName
+          $files = @(
+            "dist\PyPDF_Toolbox.exe",
+            "README.md",
+            "LICENSE",
+            "config\azure_ai.yaml.template"
+          )
+          if (Test-Path $zipPath) { Remove-Item -Force $zipPath }
+          Compress-Archive -Path $files -DestinationPath $zipPath
+          $hash = (Get-FileHash -Algorithm SHA256 $zipPath).Hash.ToLower()
+          $hashLine = "$hash  $zipName"
+          $hashLine | Out-File -FilePath "$zipPath.sha256.txt" -Encoding ASCII
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            PyPDF_Toolbox-${{ github.ref_name }}-win64.zip
+            PyPDF_Toolbox-${{ github.ref_name }}-win64.zip.sha256.txt

@@ -3,7 +3,7 @@ setlocal
 
 set SCRIPT_DIR=%~dp0
 set ROOT_DIR=%SCRIPT_DIR%
-set VENV_DIR=%ROOT_DIR%\venv
+set VENV_DIR=%ROOT_DIR%\.venv
 set PYTHON_EXE=%VENV_DIR%\Scripts\python.exe
 
 echo ============================================

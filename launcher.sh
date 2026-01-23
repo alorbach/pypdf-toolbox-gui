@@ -2,7 +2,7 @@
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 ROOT_DIR="$SCRIPT_DIR"
-VENV_DIR="$ROOT_DIR/venv"
+VENV_DIR="$ROOT_DIR/.venv"
 PYTHON_EXE="$VENV_DIR/bin/python"
 
 echo "============================================"

@@ -444,7 +444,7 @@ pypdf-toolbox-gui/
 │   ├── launcher_gui.py          # Main launcher GUI
 │   ├── pdf_*.py                 # Individual tool scripts
 │   └── utils/                   # Shared utilities
-└── venv/                        # Virtual environment (auto-created)
+└── .venv/                       # Virtual environment (auto-created)
 ```
 
 ### Naming Conventions
@@ -1078,3 +1078,34 @@ The main `README.md` displays tools in a **3-column image grid** format:
 - Document all keyboard shortcuts and features
 - Include troubleshooting tips for common issues
 - Update main README.md image grid when new tool screenshots become available
+
+### Path Guidelines in Documentation
+
+**CRITICAL: NEVER use local machine paths in documentation files.**
+
+When writing documentation (README.md, INSTALLATION.md, etc.):
+
+1. **Use generic sample paths** instead of actual local paths:
+   - ❌ **WRONG**: `cd "d:\developer\user\pypdf-toolbox-gui"`
+   - ✅ **CORRECT**: `cd "C:\Projects\pypdf-toolbox-gui"` or `cd "C:\Users\YourName\Documents\pypdf-toolbox-gui"`
+
+2. **Common sample paths to use**:
+   - Windows: `C:\Projects\project-name`, `C:\Users\YourName\Documents\project-name`, `C:\Dev\project-name`
+   - Linux/macOS: `~/projects/project-name`, `/home/username/projects/project-name`, `/opt/project-name`
+
+3. **Always include a note** that users should replace with their actual path:
+   ```markdown
+   cd "C:\Projects\pypdf-toolbox-gui"
+   *(Replace with your actual project path)*
+   ```
+
+4. **Check all documentation files** for hardcoded paths before committing:
+   - README.md
+   - INSTALLATION.md
+   - Any tool-specific documentation in `doc/` folder
+
+5. **Why this matters**:
+   - Documentation should be generic and usable by anyone
+   - Local paths expose personal directory structure
+   - Sample paths help users understand where to place files
+   - Makes documentation more professional and maintainable

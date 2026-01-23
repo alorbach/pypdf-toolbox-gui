@@ -82,6 +82,13 @@ class PDFToolLauncher:
         self.script_dir = Path(__file__).parent
         self.root_dir = self.script_dir.parent
         
+        # Check if running as executable (PyInstaller)
+        self.is_executable = getattr(sys, 'frozen', False)
+        if self.is_executable:
+            # When running as EXE, the executable is the entry point
+            self.exe_path = Path(sys.executable)
+            self.root_dir = self.exe_path.parent
+        
         # Determine OS and launcher extension
         self.is_windows = platform.system() == "Windows"
         self.launcher_ext = ".bat" if self.is_windows else ".sh"
@@ -523,17 +530,42 @@ class PDFToolLauncher:
         if not self.root_dir.exists():
             return
         
-        # Scan for launch_*.bat or launch_*.sh files
-        for launcher_file in self.root_dir.glob(f"launch_*{self.launcher_ext}"):
-            name = launcher_file.stem.replace("launch_", "")
-            category = self._get_tool_category(name)
-            self.launchers.append({
-                "name": name,
-                "display_name": self._format_tool_name(name),
-                "path": launcher_file,
-                "icon": self._get_tool_icon(name),
-                "category": category
-            })
+        if self.is_executable:
+            # In executable mode, scan for known tools and use the executable itself
+            # Map of tool names to their launcher names
+            # Map of launcher names to their tool names for --tool argument
+            # Key: launcher name (as it appears in launch_*.bat files)
+            # Value: tool name to pass to --tool argument
+            tool_mapping = {
+                "pdf_ocr": "pdf_ocr",
+                "pdf_text_extractor": "pdf_text_extractor",
+                "pdf_visual_combiner": "pdf_visual_combiner",  # Maps to pdf_combiner module
+                "pdf_splitter": "pdf_splitter",  # Maps to pdf_manual_splitter module
+                "pdf_md_converter": "pdf_md_converter",
+            }
+            
+            for launcher_name, tool_name in tool_mapping.items():
+                category = self._get_tool_category(launcher_name)
+                self.launchers.append({
+                    "name": launcher_name,
+                    "display_name": self._format_tool_name(launcher_name),
+                    "path": self.exe_path,  # Use executable path
+                    "icon": self._get_tool_icon(launcher_name),
+                    "category": category,
+                    "tool_name": tool_name  # Store actual tool name for --tool argument
+                })
+        else:
+            # Normal mode: scan for launch_*.bat or launch_*.sh files
+            for launcher_file in self.root_dir.glob(f"launch_*{self.launcher_ext}"):
+                name = launcher_file.stem.replace("launch_", "")
+                category = self._get_tool_category(name)
+                self.launchers.append({
+                    "name": name,
+                    "display_name": self._format_tool_name(name),
+                    "path": launcher_file,
+                    "icon": self._get_tool_icon(name),
+                    "category": category
+                })
         
         # Sort by category, then alphabetically within category
         category_order = ["split_merge", "extract_analyze", "convert_transform", "optimize", "security", "annotate", "other"]
@@ -712,13 +744,43 @@ class PDFToolLauncher:
             self.append_log(f"{'='*50}", tool_name)
             self.append_log(f"Launching {display_name}...", tool_name)
             
+            # Check if running in executable mode
+            if self.is_executable:
+                # Launch the executable itself with --tool argument
+                tool_name_arg = launcher.get("tool_name", tool_name)
+                
+                # Debug: Log what we're launching
+                self.append_log(f"[DEBUG] Launching executable: {self.exe_path}", tool_name)
+                self.append_log(f"[DEBUG] Tool name from launcher: {tool_name}", tool_name)
+                self.append_log(f"[DEBUG] Tool name arg for --tool: {tool_name_arg}", tool_name)
+                
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                startupinfo.wShowWindow = subprocess.SW_HIDE
+                
+                cmd = [str(self.exe_path), "--tool", tool_name_arg]
+                self.append_log(f"[DEBUG] Command: {' '.join(cmd)}", tool_name)
+                
+                process = subprocess.Popen(
+                    cmd,
+                    cwd=str(self.root_dir),
+                    env=env,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    stdin=subprocess.PIPE,
+                    startupinfo=startupinfo,
+                    creationflags=subprocess.CREATE_NO_WINDOW,
+                    text=True,
+                    bufsize=1
+                )
+                self.append_log(f"Started: {display_name} (via executable)", tool_name)
             # Try to launch directly with Python (no console window)
-            if self.is_windows:
+            elif self.is_windows:
                 # Find the Python script for this tool
                 tool_script = self._get_tool_python_script(tool_name)
                 
                 # Get Python executable from venv
-                python_exe = self.root_dir / "venv" / "Scripts" / "python.exe"
+                python_exe = self.root_dir / ".venv" / "Scripts" / "python.exe"
                 
                 if tool_script and python_exe.exists():
                     # Launch Python script directly - no console window
@@ -761,7 +823,7 @@ class PDFToolLauncher:
             else:
                 # Linux/Mac: try direct Python launch first
                 tool_script = self._get_tool_python_script(tool_name)
-                python_exe = self.root_dir / "venv" / "bin" / "python"
+                python_exe = self.root_dir / ".venv" / "bin" / "python"
                 
                 if tool_script and python_exe.exists():
                     process = subprocess.Popen(
@@ -966,7 +1028,7 @@ class PDFToolLauncher:
             
             if response:
                 try:
-                    python_exe = self.root_dir / "venv" / "Scripts" / "python.exe" if self.is_windows else self.root_dir / "venv" / "bin" / "python"
+                    python_exe = self.root_dir / ".venv" / "Scripts" / "python.exe" if self.is_windows else self.root_dir / ".venv" / "bin" / "python"
                     
                     if not python_exe.exists():
                         python_exe = sys.executable

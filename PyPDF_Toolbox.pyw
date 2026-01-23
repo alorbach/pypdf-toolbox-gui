@@ -45,7 +45,7 @@ def main():
     script_dir = Path(__file__).parent.resolve()
     
     # Paths
-    venv_dir = script_dir / "venv"
+    venv_dir = script_dir / ".venv"
     launcher_script = script_dir / "src" / "launcher_gui.py"
     requirements_file = script_dir / "requirements.txt"
     

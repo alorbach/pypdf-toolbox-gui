@@ -2,7 +2,7 @@
 setlocal
 
 set SCRIPT_DIR=%~dp0
-set VENV_DIR=%SCRIPT_DIR%venv
+set VENV_DIR=%SCRIPT_DIR%.venv
 set PYTHON_EXE=%VENV_DIR%\Scripts\python.exe
 set PYTHONW_EXE=%VENV_DIR%\Scripts\pythonw.exe
 set REQUIREMENTS=%SCRIPT_DIR%requirements.txt

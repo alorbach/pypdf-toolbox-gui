@@ -3,7 +3,7 @@
 :: Double-click this file to start PyPDF Toolbox without a console window
 
 set SCRIPT_DIR=%~dp0
-set VENV_DIR=%SCRIPT_DIR%venv
+set VENV_DIR=%SCRIPT_DIR%.venv
 set PYTHONW_EXE=%VENV_DIR%\Scripts\pythonw.exe
 set PYTHON_EXE=%VENV_DIR%\Scripts\python.exe
 set LAUNCHER_SCRIPT=%SCRIPT_DIR%src\launcher_gui.py
