@@ -1079,6 +1079,97 @@ The main `README.md` displays tools in a **3-column image grid** format:
 - Include troubleshooting tips for common issues
 - Update main README.md image grid when new tool screenshots become available
 
+## GitHub Releases
+
+**All releases are automatically built by GitHub Actions when a tag is pushed.**
+
+### Release Process
+
+1. **Create and push tag**: `git tag vX.Y.Z && git push origin vX.Y.Z`
+2. **GitHub Actions builds** the Windows EXE automatically
+3. **Release is created** with ZIP and SHA256 checksum files
+4. **Add release description** using the template below
+
+### Release Description Template
+
+When creating a GitHub Release, use this template format (copy-ready):
+
+```markdown
+# PyPDF Toolbox vX.Y.Z - <Release Type>
+
+## <Release Title/Summary>
+
+<Brief description of what's new or changed in this release>
+
+## ✨ Features
+
+- **Feature 1**: Description
+- **Feature 2**: Description
+- **New Tool**: Description (if applicable)
+
+## 🐛 Bug Fixes
+
+- Fixed issue with <description>
+- Resolved <problem>
+
+## 📦 Included Tools
+
+- **PDF Splitter**: Manually split PDFs by selecting split points with visual thumbnail preview
+- **PDF Visual Combiner**: Combine multiple PDFs by visually selecting individual pages from thumbnails
+- **PDF Text Extractor**: Extract text from PDFs using Python, OCR, or Azure AI
+- **PDF OCR**: Add OCR text recognition to PDFs and convert images to searchable PDFs
+- **Markdown Converter**: Convert Markdown to PDF/DOCX with live HTML preview and style presets
+
+## 🚀 Installation
+
+1. Download `PyPDF_Toolbox-vX.Y.Z-win64.zip`
+2. Extract the ZIP file
+3. Run `PyPDF_Toolbox.exe`
+4. The launcher will appear at the top of your screen
+
+## 🔒 Verification
+
+Verify the integrity of the download using the SHA256 checksum:
+
+```bash
+# Windows PowerShell
+Get-FileHash -Algorithm SHA256 PyPDF_Toolbox-vX.Y.Z-win64.zip
+
+# Compare with the hash in PyPDF_Toolbox-vX.Y.Z-win64.zip.sha256.txt
+```
+
+## 📋 Requirements
+
+- **Windows 10 or later**
+- No Python installation required
+- Optional: Tesseract OCR for OCR functionality (see [INSTALLATION.md](https://github.com/alorbach/pypdf-toolbox-gui/blob/main/INSTALLATION.md))
+
+## 📚 Documentation
+
+- [Installation Guide](https://github.com/alorbach/pypdf-toolbox-gui/blob/main/INSTALLATION.md)
+- [Project README](https://github.com/alorbach/pypdf-toolbox-gui/blob/main/README.md)
+
+## 🐛 Known Issues
+
+- <List any known issues or limitations>
+
+## 📝 License
+
+Copyright 2025-2026 Andre Lorbach
+
+Licensed under the Apache License, Version 2.0. See [LICENSE](https://github.com/alorbach/pypdf-toolbox-gui/blob/main/LICENSE) for details.
+```
+
+### Release Description Guidelines
+
+- **Version number**: Replace `vX.Y.Z` with actual version (e.g., `v1.0.0`)
+- **Release Type**: Use "Initial Release", "Feature Release", "Bug Fix Release", etc.
+- **Features section**: List new features or major improvements
+- **Bug Fixes section**: Only include if there are bug fixes
+- **Known Issues**: Update or remove if issues are resolved
+- **Keep it concise**: Focus on user-visible changes
+- **Update tool list**: If new tools are added, update the "Included Tools" section
+
 ### Path Guidelines in Documentation
 
 **CRITICAL: NEVER use local machine paths in documentation files.**
