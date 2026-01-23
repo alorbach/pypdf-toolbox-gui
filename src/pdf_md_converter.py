@@ -1756,7 +1756,14 @@ class MarkdownConverterGUI:
         width = int(os.environ.get('TOOL_WINDOW_WIDTH', 1200))
         height = int(os.environ.get('TOOL_WINDOW_HEIGHT', 800))
         
+        # Ensure minimum size (match launcher minimum width)
+        width = max(width, 1280)  # Match launcher minimum width (1280px)
+        height = max(height, 600)
+        
         self.root.geometry(f"{width}x{height}+{x}+{y}")
+        
+        # Set minimum size to match launcher
+        self.root.minsize(1280, 600)
     
     def setup_ui(self):
         """Set up the user interface"""

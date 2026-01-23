@@ -772,7 +772,7 @@ class ManualSplitDialog:
         
         self.root.title("PDF Manual Splitter")
         self.root.geometry("1400x900")
-        self.root.minsize(1000, 700)
+        self.root.minsize(1280, 700)  # Match launcher minimum width (1280px)
         self.root.resizable(True, True)
         self.root.configure(bg=UIColors.BG_SECONDARY)
         
@@ -1561,7 +1561,7 @@ class PDFManualSplitterApp:
         
         self.root.title("PDF Manual Splitter")
         self.root.geometry("900x700")
-        self.root.minsize(700, 500)
+        self.root.minsize(1280, 500)  # Match launcher minimum width (1280px)
         self.root.resizable(True, True)
         
         # Position window using environment variables if available
@@ -1587,8 +1587,8 @@ class PDFManualSplitterApp:
                 width = int(os.environ.get('TOOL_WINDOW_WIDTH', 900))
                 height = int(os.environ.get('TOOL_WINDOW_HEIGHT', 700))
                 
-                # Ensure minimum size
-                width = max(width, 800)
+                # Ensure minimum size (match launcher minimum width)
+                width = max(width, 1280)  # Match launcher minimum width (1280px)
                 height = max(height, 600)
                 
                 self.root.geometry(f"{width}x{height}+{x}+{y}")

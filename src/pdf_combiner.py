@@ -232,7 +232,7 @@ class PDFCombinerApp:
         
         self.root.title("PDF Combiner - Visual Page Selection")
         self.root.geometry("1800x1200")
-        self.root.minsize(1200, 800)
+        self.root.minsize(1280, 800)  # Match launcher minimum width (1280px)
         self.root.resizable(True, True)
         
         # Position window using environment variables if available
@@ -275,8 +275,8 @@ class PDFCombinerApp:
                 width = int(os.environ.get('TOOL_WINDOW_WIDTH', 1800))
                 height = int(os.environ.get('TOOL_WINDOW_HEIGHT', 1200))
                 
-                # Ensure minimum size
-                width = max(width, 1200)
+                # Ensure minimum size (match launcher minimum width)
+                width = max(width, 1280)  # Match launcher minimum width (1280px)
                 height = max(height, 800)
                 
                 self.root.geometry(f"{width}x{height}+{x}+{y}")

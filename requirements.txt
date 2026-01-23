@@ -10,6 +10,7 @@ reportlab>=4.0.0
 pytesseract>=0.3.10
 pillow>=10.0.0
 ocrmypdf>=16.0.0  # For OCR-based text extraction from scanned PDFs
+img2pdf>=0.5.0  # For converting images to PDF before OCR
 
 # GUI framework
 # tkinter is included with Python standard library

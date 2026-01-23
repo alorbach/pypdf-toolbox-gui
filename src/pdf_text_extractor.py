@@ -726,7 +726,7 @@ class PDFTextExtractorApp:
         
         self.root.title("PDF Text Extractor")
         self.root.geometry("1000x480")
-        self.root.minsize(800, 450)
+        self.root.minsize(1280, 450)  # Match launcher minimum width (1280px)
         self.root.resizable(True, True)
         
         # Position window
@@ -756,7 +756,7 @@ class PDFTextExtractorApp:
                 width = int(os.environ.get('TOOL_WINDOW_WIDTH', 1000))
                 height = int(os.environ.get('TOOL_WINDOW_HEIGHT', 750))
                 
-                width = max(width, 800)
+                width = max(width, 1280)  # Match launcher minimum width (1280px)
                 height = max(height, 450)  # Reduced minimum height
                 
                 self.root.geometry(f"{width}x{height}+{x}+{y}")

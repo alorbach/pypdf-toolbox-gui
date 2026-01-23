@@ -72,7 +72,7 @@ class PDFToolLauncher:
     # Configuration for launcher bar
     LAUNCHER_HEIGHT = 70  # Height of the launcher bar
     LAUNCHER_PADDING = 10  # Padding from screen edges
-    LOG_PANEL_WIDTH = 500  # Width of the log panel when expanded
+    LOG_PANEL_WIDTH = 800  # Width of the log panel when expanded (increased for wider log output)
     
     def __init__(self, root):
         self.root = root
@@ -151,8 +151,9 @@ class PDFToolLauncher:
         # Calculate available area for tool windows (below launcher)
         self.update_tool_area()
         
-        # Prevent vertical resizing, set minimum width
+        # Allow horizontal resizing, prevent vertical resizing
         self.root.resizable(True, False)
+        # Set minimum width to match MIN_LAUNCHER_WIDTH
         self.root.minsize(MIN_LAUNCHER_WIDTH, self.LAUNCHER_HEIGHT)
     
     def update_tool_area(self):
@@ -190,7 +191,7 @@ class PDFToolLauncher:
             self.tool_area_width = min(current_width, self.screen_width - self.x_pos - self.LAUNCHER_PADDING)
         
         # Ensure minimum dimensions
-        self.tool_area_width = max(self.tool_area_width, 600)
+        self.tool_area_width = max(self.tool_area_width, 1280)  # Match launcher minimum width
         self.tool_area_height = max(self.tool_area_height, 400)
     
     def _on_window_configure(self, event):
@@ -222,13 +223,13 @@ class PDFToolLauncher:
     
     def setup_ui(self):
         """Setup the launcher UI with expandable log panel"""
-        # Main container
+        # Main container - vertical layout
         self.main_container = ttk.Frame(self.root)
         self.main_container.pack(fill='both', expand=True)
         
-        # Launcher bar frame
+        # Launcher bar frame - always at top
         self.launcher_frame = ttk.Frame(self.main_container, padding=5)
-        self.launcher_frame.pack(side='left', fill='both', expand=True)
+        self.launcher_frame.pack(side='top', fill='x', expand=False)
         
         # Left side: Title and logo area
         left_frame = ttk.Frame(self.launcher_frame)
@@ -276,17 +277,23 @@ class PDFToolLauncher:
             anchor='nw'
         )
         
-        # Configure scrolling - update scrollregion and canvas window width
+        # Configure scrolling - update scrollregion
         def configure_scroll_region(event=None):
-            # Update scrollregion
-            self.tools_canvas.configure(scrollregion=self.tools_canvas.bbox('all'))
-            # Update canvas window width to match canvas width
-            canvas_width = self.tools_canvas.winfo_width()
-            if canvas_width > 1:
-                self.tools_canvas.itemconfig(self.canvas_window, width=canvas_width)
+            # Update scrollregion to include all content
+            bbox = self.tools_canvas.bbox('all')
+            if bbox:
+                self.tools_canvas.configure(scrollregion=bbox)
+            # DO NOT constrain canvas window width - let it be as wide as content for scrolling
+        
+        def configure_canvas_window(event=None):
+            # Only update canvas window height to match canvas, but NOT width
+            # Width should be unconstrained to allow horizontal scrolling
+            canvas_height = self.tools_canvas.winfo_height()
+            if canvas_height > 1:
+                self.tools_canvas.itemconfig(self.canvas_window, height=canvas_height)
         
         self.buttons_frame.bind('<Configure>', configure_scroll_region)
-        self.tools_canvas.bind('<Configure>', configure_scroll_region)
+        self.tools_canvas.bind('<Configure>', configure_canvas_window)
         
         # Mouse wheel scrolling (horizontal)
         self.tools_canvas.bind('<MouseWheel>', self._on_mousewheel)
@@ -355,21 +362,22 @@ class PDFToolLauncher:
         self.create_log_panel()
     
     def create_log_panel(self):
-        """Create the expandable log panel"""
-        # Log panel frame (will be shown/hidden)
+        """Create the expandable log panel with buttons above the log output"""
+        # Log panel frame (will be shown/hidden) - positioned below launcher bar
         self.log_panel = ttk.Frame(self.main_container, padding=5)
         
-        # Log panel header
+        # Log panel header with buttons ABOVE the log output
         log_header = ttk.Frame(self.log_panel)
         log_header.pack(fill='x', pady=(0, 5))
         
+        # Title label
         ttk.Label(log_header, text="📋 Tool Output Log", font=("Segoe UI", 10, "bold")).pack(side='left')
         
-        # Clear log button
+        # Clear log button (on the right side of header)
         clear_btn = ttk.Button(log_header, text="Clear", command=self.clear_log, width=6)
         clear_btn.pack(side='right', padx=2)
         
-        # Log text widget
+        # Log text widget (below the header/buttons) - wider for better readability
         self.log_text = scrolledtext.ScrolledText(
             self.log_panel,
             wrap=tk.WORD,
@@ -377,9 +385,10 @@ class PDFToolLauncher:
             bg="#1e1e1e",
             fg="#d4d4d4",
             insertbackground="#d4d4d4",
-            width=60,
-            height=3
+            width=120,  # Increased for wider log output (full width available)
+            height=10   # Increased height for better visibility
         )
+        # Pack log text below the header, taking up remaining space
         self.log_text.pack(fill='both', expand=True)
         self.log_text.config(state=tk.DISABLED)
         
@@ -403,17 +412,26 @@ class PDFToolLauncher:
             self.log_panel_visible = False
             self.log_toggle_btn.config(text="📋 Log")
             
-            # Resize launcher to slim height, keep current position and width
+            # Resize launcher to slim height, restore original width
+            # When log is hidden, window is just the launcher bar height
             self.root.geometry(f"{current_width}x{self.LAUNCHER_HEIGHT}+{current_x}+{current_y}")
         else:
-            # Show log panel
-            self.log_panel.pack(side='right', fill='y')
+            # Show log panel - pack BELOW the launcher bar (not to the right)
+            # Buttons are already above the log output in the layout
+            # Pack after launcher_frame (which is already packed to 'top')
+            self.log_panel.pack(side='top', fill='both', expand=True)
             self.log_panel_visible = True
             self.log_toggle_btn.config(text="📋 Hide")
             
-            # Resize launcher to accommodate log panel, keep current position and width
-            new_height = 300  # Taller when log is visible
-            self.root.geometry(f"{current_width}x{new_height}+{current_x}+{current_y}")
+            # Resize launcher to accommodate log panel below
+            # Use full width for log panel (wider log output), increase height for log panel
+            # Keep current width or use screen width minus padding
+            new_width = max(current_width, self.screen_width - (2 * self.LAUNCHER_PADDING))
+            new_height = 400  # Taller when log is visible (launcher bar + log panel)
+            self.root.geometry(f"{new_width}x{new_height}+{current_x}+{current_y}")
+            
+            # Update to ensure proper sizing
+            self.root.update_idletasks()
         
         # Update stored position
         self.x_pos = current_x
