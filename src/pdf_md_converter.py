@@ -4,7 +4,18 @@ PDF Markdown Converter Tool
 Convert Markdown files to PDF or DOCX documents with modern styling and formatting.
 
 Copyright 2025-2026 Andre Lorbach
-Licensed under Apache License 2.0
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
 """
 
 import os
@@ -18,8 +29,10 @@ import webbrowser
 import threading
 import time
 import atexit
+import json
+import io
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Dict, Any, Tuple, List
 
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, scrolledtext
@@ -62,19 +75,101 @@ except ImportError:
 weasyprint = None
 WEASYPRINT_AVAILABLE = False
 
+def _setup_weasyprint_dll_directories():
+    """Setup GTK DLL directories for WeasyPrint on Windows (Feature 6)"""
+    if sys.platform != 'win32':
+        return
+    
+    # Check if WEASYPRINT_DLL_DIRECTORIES is already set
+    dll_dirs = os.environ.get('WEASYPRINT_DLL_DIRECTORIES', '')
+    
+    # Check system environment variables (Windows)
+    if not dll_dirs:
+        try:
+            import winreg
+            # Check machine-level environment variables
+            try:
+                with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r'SYSTEM\CurrentControlSet\Control\Session Manager\Environment') as key:
+                    dll_dirs = winreg.QueryValueEx(key, 'WEASYPRINT_DLL_DIRECTORIES')[0] or ''
+            except (FileNotFoundError, OSError):
+                pass
+            
+            # Check user-level environment variables
+            if not dll_dirs:
+                try:
+                    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r'Environment') as key:
+                        dll_dirs = winreg.QueryValueEx(key, 'WEASYPRINT_DLL_DIRECTORIES')[0] or ''
+                except (FileNotFoundError, OSError):
+                    pass
+        except ImportError:
+            pass  # winreg not available
+    
+    # If not set, try to find GTK in common locations
+    if not dll_dirs:
+        possible_gtk_paths = [
+            r'C:\Program Files\GTK3-Runtime Win64\bin',
+            r'C:\Program Files (x86)\GTK3-Runtime Win64\bin',
+            r'C:\GTK3-Runtime\bin',
+            r'C:\Program Files\GTK\bin',
+            r'C:\Program Files (x86)\GTK\bin',
+            r'C:\msys64\mingw64\bin',  # MSYS2/MinGW location
+            r'C:\msys64\usr\bin',  # MSYS2 location
+        ]
+        
+        # Also check PATH for GTK
+        path_dirs = os.environ.get('PATH', '').split(os.pathsep)
+        for path_dir in path_dirs:
+            if path_dir and os.path.isdir(path_dir):
+                try:
+                    files = os.listdir(path_dir)
+                    if any('gobject' in f.lower() and f.endswith('.dll') for f in files):
+                        possible_gtk_paths.insert(0, path_dir)
+                except (OSError, PermissionError):
+                    pass
+        
+        # Find first existing GTK bin directory with gobject DLL
+        for gtk_path in possible_gtk_paths:
+            if os.path.isdir(gtk_path):
+                try:
+                    dll_files = [f for f in os.listdir(gtk_path) if 'gobject' in f.lower() and f.endswith('.dll')]
+                    if dll_files:
+                        dll_dirs = gtk_path
+                        break
+                except (OSError, PermissionError):
+                    continue
+    
+    # Set WEASYPRINT_DLL_DIRECTORIES if we found a path
+    if dll_dirs:
+        os.environ['WEASYPRINT_DLL_DIRECTORIES'] = dll_dirs
+        # Also add to DLL search path for current process
+        if hasattr(os, 'add_dll_directory'):
+            try:
+                os.add_dll_directory(dll_dirs)
+            except Exception:
+                pass
+
 def _try_import_weasyprint():
-    """Safely try to import WeasyPrint only when needed"""
+    """Safely try to import WeasyPrint only when needed (Feature 6)"""
     global weasyprint, WEASYPRINT_AVAILABLE
     
     if WEASYPRINT_AVAILABLE:
         return True
-        
+    
+    # Setup DLL directories for Windows
+    _setup_weasyprint_dll_directories()
+    
+    # Temporarily suppress stderr to catch WeasyPrint import errors silently
+    old_stderr = sys.stderr
+    sys.stderr = io.StringIO()
     try:
-        import weasyprint as wp
-        weasyprint = wp
+        from weasyprint import HTML, CSS
+        from weasyprint.text.fonts import FontConfiguration
+        weasyprint = {'HTML': HTML, 'CSS': CSS, 'FontConfiguration': FontConfiguration}
         WEASYPRINT_AVAILABLE = True
+        sys.stderr = old_stderr
         return True
-    except (ImportError, OSError):
+    except Exception:
+        sys.stderr = old_stderr
         WEASYPRINT_AVAILABLE = False
         return False
 
@@ -104,6 +199,117 @@ try:
     HTML2TEXT_AVAILABLE = True
 except ImportError:
     HTML2TEXT_AVAILABLE = False
+
+
+# ============================================================================
+# Encoding Detection
+# ============================================================================
+
+def _read_file_with_encoding_detection(file_path):
+    """Read file with automatic encoding detection"""
+    # First, check for BOM (Byte Order Mark) to detect UTF-16/UTF-8-BOM
+    with open(file_path, 'rb') as f:
+        first_bytes = f.read(4)
+        
+        # Check for UTF-16 BOMs
+        if first_bytes.startswith(b'\xff\xfe'):
+            # UTF-16 LE
+            with open(file_path, 'r', encoding='utf-16-le') as f:
+                return f.read()
+        elif first_bytes.startswith(b'\xfe\xff'):
+            # UTF-16 BE
+            with open(file_path, 'r', encoding='utf-16-be') as f:
+                return f.read()
+        elif first_bytes.startswith(b'\xef\xbb\xbf'):
+            # UTF-8 with BOM
+            with open(file_path, 'r', encoding='utf-8-sig') as f:
+                return f.read()
+    
+    # Try common encodings in order
+    encodings_to_try = ['utf-8', 'utf-8-sig', 'latin-1', 'cp1252', 'iso-8859-1']
+    
+    for encoding in encodings_to_try:
+        try:
+            with open(file_path, 'r', encoding=encoding) as f:
+                return f.read()
+        except (UnicodeDecodeError, LookupError):
+            continue
+    
+    # Last resort: read with error handling (replace invalid chars)
+    with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
+        return f.read()
+
+
+# ============================================================================
+# Settings Management
+# ============================================================================
+
+class SettingsManager:
+    """Manages application settings with save/load functionality"""
+    
+    SETTINGS_FILE = "config/md_converter_settings.json"
+    
+    DEFAULT_SETTINGS = {
+        # Optional features (Features 2-5)
+        "page_breaks_enabled": True,
+        "preprocessing_enabled": True,
+        "advanced_docx_enabled": True,
+        "font_size_options_enabled": True,
+        
+        # Font size (Feature 5)
+        "default_font_size": 10,  # 9, 10, 11, 12, 14
+        
+        # DOCX settings (Feature 4)
+        "docx_narrow_margins": False,
+        "docx_language": "de-CH",
+        
+        # Page break settings (Feature 2)
+        "auto_page_break_h2": True,
+        "auto_page_break_h3": True,
+        "skip_page_break_for": ["einleitung", "zusammenfassung"],
+        
+        # Auto-open settings
+        "autoopen_enabled": True,  # Automatically open PDF/DOCX after generation
+    }
+    
+    def __init__(self):
+        self.settings = self.DEFAULT_SETTINGS.copy()
+        self.load_settings()
+    
+    def load_settings(self):
+        """Load settings from file"""
+        settings_path = Path(self.SETTINGS_FILE)
+        if settings_path.exists():
+            try:
+                with open(settings_path, 'r', encoding='utf-8') as f:
+                    loaded = json.load(f)
+                    # Merge with defaults to ensure all keys exist
+                    self.settings.update(loaded)
+            except Exception as e:
+                print(f"[WARNING] Failed to load settings: {e}")
+                self.settings = self.DEFAULT_SETTINGS.copy()
+    
+    def save_settings(self):
+        """Save settings to file"""
+        settings_path = Path(self.SETTINGS_FILE)
+        settings_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            with open(settings_path, 'w', encoding='utf-8') as f:
+                json.dump(self.settings, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            print(f"[ERROR] Failed to save settings: {e}")
+    
+    def get(self, key: str, default=None):
+        """Get a setting value"""
+        return self.settings.get(key, default)
+    
+    def set(self, key: str, value: Any):
+        """Set a setting value"""
+        self.settings[key] = value
+    
+    def get_all(self) -> Dict[str, Any]:
+        """Get all settings"""
+        return self.settings.copy()
 
 
 # ============================================================================
@@ -174,11 +380,12 @@ class UISpacing:
 class MarkdownConverter:
     """Core markdown conversion logic"""
     
-    def __init__(self, css_preset='default'):
+    def __init__(self, css_preset='default', settings_manager=None):
         if not MARKDOWN_AVAILABLE:
             raise ImportError("markdown library is not installed. Please install with: pip install markdown")
         
         self.css_preset = css_preset
+        self.settings = settings_manager or SettingsManager()
         self.md = markdown.Markdown(
             extensions=[
                 'codehilite',
@@ -195,6 +402,46 @@ class MarkdownConverter:
                 }
             }
         )
+    
+    def preprocess_markdown(self, md_content: str) -> str:
+        """Preprocess markdown content (Feature 3 - optional)"""
+        if not self.settings.get('preprocessing_enabled', True):
+            return md_content
+        
+        # Remove horizontal rules (---) before processing
+        md_content = re.sub(r'^---+$', '', md_content, flags=re.MULTILINE)
+        md_content = re.sub(r'^\*\*\*+$', '', md_content, flags=re.MULTILINE)
+        
+        # Normalize excessive line breaks (max 2 consecutive empty lines)
+        md_content = re.sub(r'\n{4,}', '\n\n\n', md_content)
+        
+        return md_content
+    
+    def process_page_breaks(self, md_content: str) -> Tuple[str, List]:
+        """Process page breaks in markdown (Feature 2 - optional)"""
+        if not self.settings.get('page_breaks_enabled', True):
+            return md_content, []
+        
+        page_break_markers = []
+        page_break_pattern = r'<div[^>]*style="[^"]*page-break[^"]*"[^>]*></div>'
+        
+        def replace_page_break(match):
+            marker = f"<!-- PAGEBREAK_{len(page_break_markers)} -->"
+            page_break_markers.append(match.group(0))
+            return marker
+        
+        # Replace page breaks with HTML comment placeholders before markdown conversion
+        md_content_processed = re.sub(page_break_pattern, replace_page_break, md_content, flags=re.IGNORECASE)
+        
+        # Also handle simple <!-- PAGEBREAK --> comments
+        simple_pagebreak_pattern = r'<!--\s*PAGEBREAK\s*-->'
+        simple_pagebreak_count = len(re.findall(simple_pagebreak_pattern, md_content_processed, re.IGNORECASE))
+        for i in range(simple_pagebreak_count):
+            marker = f"<!-- PAGEBREAK_{len(page_break_markers)} -->"
+            page_break_markers.append('<div style="page-break-before: always;"></div>')
+            md_content_processed = re.sub(simple_pagebreak_pattern, marker, md_content_processed, count=1, flags=re.IGNORECASE)
+        
+        return md_content_processed, page_break_markers
         
     def extract_title_from_markdown(self, md_content: str) -> str:
         """Extract title from markdown content (first H1 header)"""
@@ -234,11 +481,41 @@ class MarkdownConverter:
         if not MARKDOWN_AVAILABLE:
             raise ImportError("markdown library is not installed")
         
+        # Preprocess markdown (Feature 3)
+        md_content = self.preprocess_markdown(md_content)
+        
+        # Process page breaks (Feature 2)
+        md_content, page_break_markers = self.process_page_breaks(md_content)
+        
         document_title = self.extract_title_from_markdown(md_content)
         md_content = self.process_gemini_citations(md_content)
         
         self.md.reset()
         html_body = self.md.convert(md_content)
+        
+        # Restore page breaks in HTML
+        for i, marker in enumerate([f"<!-- PAGEBREAK_{j} -->" for j in range(len(page_break_markers))]):
+            if marker in html_body:
+                html_body = html_body.replace(marker, page_break_markers[i])
+        
+        # Add automatic page breaks before numbered H2 headings (Feature 2)
+        if self.settings.get('auto_page_break_h2', True):
+            h2_pattern = r'<h2[^>]*>(.*?)</h2>'
+            h2_matches = []
+            for match in re.finditer(h2_pattern, html_body):
+                heading_text = match.group(1).strip()
+                # Only add page break for main chapters (starting with number and dot)
+                skip_words = self.settings.get('skip_page_break_for', ['einleitung', 'zusammenfassung'])
+                if re.match(r'^\d+\.', heading_text) and not any(word in heading_text.lower() for word in skip_words):
+                    h2_matches.append((match.start(), heading_text))
+            
+            # Insert page break divs before main chapter H2s
+            page_break_html = '<div style="page-break-before: always; height: 0; margin: 0; padding: 0;"></div>'
+            for pos, heading_text in reversed(h2_matches):
+                check_start = max(0, pos - 150)
+                before_text = html_body[check_start:pos]
+                if 'page-break' not in before_text.lower():
+                    html_body = html_body[:pos] + page_break_html + '\n' + html_body[pos:]
         
         html_body = re.sub(r'<table>(.*?)</table>', r'<div class="table-container"><table>\1</table></div>', html_body, flags=re.DOTALL)
         html_body = re.sub(r'<ul>(.*?)</ul>', r'<div class="list-container"><ul>\1</ul></div>', html_body, flags=re.DOTALL)
@@ -319,6 +596,8 @@ h1, h2, h3, h4, h5, h6 {
     margin-top: 2em;
     margin-bottom: 1em;
     font-weight: 700;
+    page-break-after: avoid;
+    page-break-inside: avoid;
 }
 
 h1 { 
@@ -333,14 +612,26 @@ h2 {
     border-bottom: 2px solid #e2e8f0;
     padding-bottom: 8px;
 }
+h2:not(:first-of-type) {
+    page-break-before: always;
+}
+div[style*="page-break"] + h2 {
+    page-break-before: auto;
+}
 h3 { 
     font-size: 1.5em; 
     color: var(--text-color);
+}
+h4, h5, h6 {
+    page-break-after: avoid;
+    page-break-inside: avoid;
 }
 
 p { 
     margin-bottom: 1.2em; 
     line-height: 1.8;
+    orphans: 3;
+    widows: 3;
 }
 
 code {
@@ -360,6 +651,7 @@ pre {
     overflow-x: auto;
     margin: 20px 0;
     border: 1px solid #34495e;
+    page-break-inside: avoid;
 }
 
 pre code {
@@ -372,11 +664,13 @@ pre code {
 ul, ol {
     margin: 20px 0;
     padding-left: 30px;
+    page-break-inside: avoid;
 }
 
 li {
     margin-bottom: 8px;
     line-height: 1.6;
+    page-break-inside: avoid;
 }
 
 table {
@@ -385,6 +679,7 @@ table {
     margin: 20px 0;
     background: white;
     box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    page-break-inside: avoid;
 }
 
 th {
@@ -410,6 +705,26 @@ blockquote {
     padding: 15px 20px;
     background: #f8fafc;
     font-style: italic;
+    page-break-inside: avoid;
+}
+
+div[style*="page-break"] {
+    page-break-after: always !important;
+    height: 0;
+    margin: 0;
+    padding: 0;
+}
+
+div[style*="page-break"] + * {
+    margin-top: 0;
+}
+
+hr {
+    display: none;
+    visibility: hidden;
+    height: 0;
+    margin: 0;
+    padding: 0;
 }
 
 a {
@@ -1256,10 +1571,12 @@ a:hover {
 </style>"""
     
     def _replace_emojis_for_pdf(self, text: str, keep_emojis: bool = True) -> str:
-        """Replace emojis with PDF-safe equivalents"""
+        """Replace emojis with PDF-safe equivalents or preserve UTF-8 icons"""
+        # If keep_emojis is True, preserve all Unicode characters (including UTF-8 icons)
         if keep_emojis:
             return text
         
+        # Only replace specific emojis if keep_emojis is False
         emoji_replacements = {
             '✅': '✓', '❌': '✗', '⚠': '!', '⚠️': '!',
             '☐': '[ ]', '□': '[ ]',
@@ -1270,17 +1587,9 @@ a:hover {
         for emoji, replacement in emoji_replacements.items():
             text = text.replace(emoji, replacement)
         
-        result = []
-        for char in text:
-            if ord(char) < 128 or char in 'äöüÄÖÜß':
-                result.append(char)
-            elif unicodedata.category(char).startswith(('P', 'S', 'L', 'N')):
-                if ord(char) < 0x1F000:
-                    result.append(char)
-            elif char in ['\n', '\r', '\t', ' ']:
-                result.append(char)
-        
-        return ''.join(result)
+        # Preserve all Unicode characters (including UTF-8 icons like ✅, ⭐, 🔧, etc.)
+        # ReportLab with Unicode-capable fonts (like Segoe UI) can handle these
+        return text
     
     def _apply_text_formatting(self, text: str, keep_emojis: bool = True) -> str:
         """Apply text formatting for ReportLab"""
@@ -1319,7 +1628,7 @@ a:hover {
         md_content: str,
         output_path: str,
         orientation: str = 'portrait',
-        keep_icons: bool = False,
+        keep_icons: bool = True,  # Default to True to preserve UTF-8 icons
     ) -> bool:
         """Convert markdown to PDF using ReportLab"""
         if not REPORTLAB_AVAILABLE:
@@ -1334,15 +1643,30 @@ a:hover {
                 segoe = r"c:\windows\fonts\segoeui.ttf"
                 segoe_bold = r"c:\windows\fonts\segoeuib.ttf"
                 consola = r"c:\windows\fonts\consola.ttf"
+                # Try to register Segoe UI with Unicode support
                 if os.path.exists(segoe):
-                    pdfmetrics.registerFont(TTFont("SegoeUI", segoe))
-                    base_font = "SegoeUI"
+                    try:
+                        # Register with Unicode support (subfontIndex=0 enables full Unicode)
+                        pdfmetrics.registerFont(TTFont("SegoeUI", segoe, subfontIndex=0))
+                        base_font = "SegoeUI"
+                    except Exception:
+                        # Fallback to standard registration
+                        pdfmetrics.registerFont(TTFont("SegoeUI", segoe))
+                        base_font = "SegoeUI"
                 if os.path.exists(segoe_bold):
-                    pdfmetrics.registerFont(TTFont("SegoeUI-Bold", segoe_bold))
-                    bold_font = "SegoeUI-Bold"
+                    try:
+                        pdfmetrics.registerFont(TTFont("SegoeUI-Bold", segoe_bold, subfontIndex=0))
+                        bold_font = "SegoeUI-Bold"
+                    except Exception:
+                        pdfmetrics.registerFont(TTFont("SegoeUI-Bold", segoe_bold))
+                        bold_font = "SegoeUI-Bold"
                 if os.path.exists(consola):
-                    pdfmetrics.registerFont(TTFont("Consolas", consola))
-                    mono_font = "Consolas"
+                    try:
+                        pdfmetrics.registerFont(TTFont("Consolas", consola, subfontIndex=0))
+                        mono_font = "Consolas"
+                    except Exception:
+                        pdfmetrics.registerFont(TTFont("Consolas", consola))
+                        mono_font = "Consolas"
             except Exception:
                 pass
             
@@ -1535,6 +1859,44 @@ a:hover {
             print(f"ReportLab PDF generation failed: {str(e)}")
             return False
     
+    def markdown_to_pdf_weasyprint(self, md_content: str, output_path: str, orientation: str = 'portrait') -> bool:
+        """Convert Markdown to PDF using WeasyPrint (Feature 6)"""
+        if not _try_import_weasyprint():
+            return False
+        
+        try:
+            # Preprocess markdown
+            md_content = self.preprocess_markdown(md_content)
+            
+            # Process page breaks
+            md_content, page_break_markers = self.process_page_breaks(md_content)
+            
+            # Convert markdown to HTML
+            html_content = self.markdown_to_html(md_content)
+            
+            # Add @page CSS for orientation
+            page_size = "A4 landscape" if orientation.lower() == 'landscape' else "A4"
+            page_css = f"""
+            @page {{
+                size: {page_size};
+                margin: 2cm;
+            }}
+            """
+            
+            # Inject page CSS into HTML
+            html_content = html_content.replace('</style>', f'{page_css}</style>', 1)
+            
+            # Convert HTML to PDF using WeasyPrint
+            HTML = weasyprint['HTML']
+            FontConfiguration = weasyprint['FontConfiguration']
+            
+            font_config = FontConfiguration()
+            HTML(string=html_content).write_pdf(output_path, font_config=font_config)
+            return True
+        except Exception as e:
+            print(f"[ERROR] WeasyPrint conversion failed: {e}")
+            return False
+    
     def _find_chromium_for_pdf(self) -> Optional[str]:
         """Find a Chromium-based browser executable"""
         candidates = [
@@ -1625,34 +1987,266 @@ a:hover {
             s = s.replace(k, v)
         return s
     
+    def _normalize_anchor_for_docx(self, anchor: str) -> str:
+        """Make anchor names safe for Word bookmarks (Feature 4)"""
+        safe = re.sub(r'[^A-Za-z0-9_-]+', '-', anchor.strip())
+        if not safe or not safe[0].isalpha():
+            safe = f"a-{safe}"
+        return safe
+    
+    def _extract_heading_text_and_anchor(self, text: str):
+        """Extract visible heading text and optional {#anchor} (Feature 4)"""
+        match = re.match(r'^(.*)\s*\{#([A-Za-z0-9_-]+)\}\s*$', text)
+        if match:
+            return match.group(1).strip(), match.group(2).strip()
+        return text.strip(), None
+    
+    def _add_bookmark(self, paragraph, anchor: str, bookmark_id: int):
+        """Add a Word bookmark to the given paragraph (Feature 4)"""
+        if not DOCX_AVAILABLE:
+            return
+        try:
+            from docx.oxml import OxmlElement
+            from docx.oxml.ns import qn
+            
+            start = OxmlElement('w:bookmarkStart')
+            start.set(qn('w:id'), str(bookmark_id))
+            start.set(qn('w:name'), anchor)
+            end = OxmlElement('w:bookmarkEnd')
+            end.set(qn('w:id'), str(bookmark_id))
+            
+            paragraph._p.insert(0, start)
+            paragraph._p.append(end)
+        except Exception:
+            pass
+    
+    def _add_anchor_hyperlink(self, paragraph, text: str, anchor: str):
+        """Add internal hyperlink to a bookmark (Feature 4)"""
+        if not DOCX_AVAILABLE:
+            return
+        try:
+            from docx.oxml import OxmlElement
+            from docx.oxml.ns import qn
+            
+            hyperlink = OxmlElement('w:hyperlink')
+            hyperlink.set(qn('w:anchor'), anchor)
+            
+            run = OxmlElement('w:r')
+            r_pr = OxmlElement('w:rPr')
+            r_style = OxmlElement('w:rStyle')
+            r_style.set(qn('w:val'), 'Hyperlink')
+            r_pr.append(r_style)
+            run.append(r_pr)
+            
+            text_elem = OxmlElement('w:t')
+            text_elem.text = text
+            run.append(text_elem)
+            
+            hyperlink.append(run)
+            paragraph._p.append(hyperlink)
+        except Exception:
+            pass
+    
+    def _add_external_hyperlink(self, paragraph, text: str, url: str):
+        """Add external hyperlink to a URL (Feature 4)"""
+        if not DOCX_AVAILABLE:
+            return
+        try:
+            from docx.oxml import OxmlElement
+            from docx.oxml.ns import qn
+            import docx.opc.constants as constants
+            
+            part = paragraph.part
+            r_id = part.relate_to(url, constants.RELATIONSHIP_TYPE.HYPERLINK, is_external=True)
+            
+            hyperlink = OxmlElement('w:hyperlink')
+            hyperlink.set(qn('r:id'), r_id)
+            
+            run = OxmlElement('w:r')
+            r_pr = OxmlElement('w:rPr')
+            r_style = OxmlElement('w:rStyle')
+            r_style.set(qn('w:val'), 'Hyperlink')
+            r_pr.append(r_style)
+            run.append(r_pr)
+            
+            text_elem = OxmlElement('w:t')
+            text_elem.text = text
+            run.append(text_elem)
+            
+            hyperlink.append(run)
+            paragraph._p.append(hyperlink)
+        except Exception:
+            pass
+    
+    def _set_default_language(self, doc, lang_code="de-CH"):
+        """Set default proofing language for the document (Feature 4)"""
+        if not DOCX_AVAILABLE:
+            return
+        try:
+            from docx.oxml.ns import qn
+            style = doc.styles['Normal']
+            rpr = style._element.get_or_add_rPr()
+            lang = rpr.get_or_add_lang()
+            lang.set(qn('w:val'), lang_code)
+        except Exception:
+            pass
+    
+    def _add_formatted_text(self, paragraph, text, anchor_map=None):
+        """Add inline markdown formatting and links (Feature 4)"""
+        if not DOCX_AVAILABLE:
+            paragraph.add_run(text)
+            return
+        
+        anchor_map = anchor_map or {}
+        
+        def add_run(content, style=None):
+            run = paragraph.add_run(content)
+            if style == 'bold':
+                run.bold = True
+            elif style == 'italic':
+                run.italic = True
+            elif style == 'code':
+                run.font.name = 'Courier New'
+        
+        # Match links: [[text]](url) and [text](url)
+        double_bracket_pattern = re.compile(r'\[\[([^\]]+)\]\]\(([^)]+)\)')
+        single_bracket_pattern = re.compile(r'(?<!\[)\[([^\]]+)\]\(([^)]+)\)(?!\])')
+        
+        matches = []
+        for match in double_bracket_pattern.finditer(text):
+            matches.append((match.start(), match.end(), match.group(1), match.group(2), True))
+        for match in single_bracket_pattern.finditer(text):
+            overlap = False
+            for d_start, d_end, _, _, _ in matches:
+                if not (match.end() <= d_start or match.start() >= d_end):
+                    overlap = True
+                    break
+            if not overlap:
+                matches.append((match.start(), match.end(), match.group(1), match.group(2), False))
+        
+        matches.sort(key=lambda x: x[0])
+        
+        idx = 0
+        for match_start, match_end, link_text, link_target, is_double_bracket in matches:
+            if match_start > idx:
+                self._add_formatted_text(paragraph, text[idx:match_start], anchor_map=anchor_map)
+            
+            if is_double_bracket:
+                link_text = f"[{link_text}]"
+            
+            if link_target.startswith('#'):
+                link_anchor = link_target[1:]
+                target = anchor_map.get(link_anchor)
+                if target:
+                    self._add_anchor_hyperlink(paragraph, link_text, target)
+                else:
+                    add_run(link_text)
+            elif link_target.startswith('http://') or link_target.startswith('https://'):
+                self._add_external_hyperlink(paragraph, link_text, link_target)
+            else:
+                add_run(link_text)
+            idx = match_end
+        
+        remaining = text[idx:]
+        if not remaining:
+            return
+        
+        parts = re.split(r'(\*\*.*?\*\*|_.*?_|`.*?`)', remaining)
+        for part in parts:
+            if part.startswith('**') and part.endswith('**'):
+                add_run(part[2:-2], 'bold')
+            elif part.startswith('_') and part.endswith('_') and len(part) > 2:
+                add_run(part[1:-1], 'italic')
+            elif part.startswith('`') and part.endswith('`'):
+                add_run(part[1:-1], 'code')
+            else:
+                add_run(part)
+    
     def markdown_to_docx(self, md_content: str, output_path: str) -> bool:
-        """Convert markdown to DOCX document"""
+        """Convert markdown to DOCX document (Feature 4: Advanced DOCX)"""
         if not DOCX_AVAILABLE:
             messagebox.showerror("Error", "python-docx not available. Cannot export to DOCX.")
             return False
-            
+        
+        use_advanced = self.settings.get('advanced_docx_enabled', True)
+        font_size = self.settings.get('default_font_size', 10) if self.settings.get('font_size_options_enabled', True) else None
+        narrow_margins = self.settings.get('docx_narrow_margins', False)
+        language = self.settings.get('docx_language', 'de-CH')
+        
         try:
+            # Preprocess markdown
+            md_content = self.preprocess_markdown(md_content)
+            
             doc = Document()
             document_title = self.extract_title_from_markdown(md_content)
             doc.core_properties.title = document_title
             doc.core_properties.author = "Markdown Converter"
+            
+            # Set default language
+            if use_advanced:
+                self._set_default_language(doc, language)
+            
+            # Set margins
+            if narrow_margins:
+                sections = doc.sections
+                for section in sections:
+                    section.top_margin = Inches(0.5)
+                    section.bottom_margin = Inches(0.5)
+                    section.left_margin = Inches(0.5)
+                    section.right_margin = Inches(0.5)
+            
+            # Set font size
+            if font_size is not None:
+                style = doc.styles['Normal']
+                style.font.size = Pt(font_size)
+                # Adjust heading sizes proportionally
+                heading_multipliers = {
+                    'Heading 1': 1.5,
+                    'Heading 2': 1.3,
+                    'Heading 3': 1.15,
+                    'Heading 4': 1.1,
+                    'Heading 5': 1.1,
+                    'Heading 6': 1.1,
+                }
+                for heading_name, multiplier in heading_multipliers.items():
+                    heading_style = doc.styles[heading_name]
+                    heading_style.font.size = Pt(int(font_size * multiplier))
             
             md_content = self.process_gemini_citations(md_content)
             
             lines = md_content.split('\n')
             in_code_block = False
             code_lines = []
-            i = 0
+            bookmark_id = 0
+            anchor_map = {}
+            previous_was_content = False
+            needs_page_break = False
             
+            i = 0
             while i < len(lines):
                 line = lines[i]
                 line_stripped = line.strip()
+                
+                # Handle page breaks
+                if 'page-break' in line_stripped.lower() and 'div' in line_stripped.lower():
+                    needs_page_break = True
+                    i += 1
+                    continue
+                if re.match(r'<!--\s*PAGEBREAK\s*-->', line_stripped, re.IGNORECASE):
+                    needs_page_break = True
+                    i += 1
+                    continue
                 
                 if line_stripped.startswith('```'):
                     if in_code_block:
                         if code_lines:
                             code_text = '\n'.join(code_lines)
-                            p = doc.add_paragraph(code_text, style='Code')
+                            if use_advanced:
+                                p = doc.add_paragraph()
+                                run = p.add_run(code_text)
+                                run.font.name = 'Courier New'
+                            else:
+                                p = doc.add_paragraph(code_text, style='Code')
                         code_lines = []
                         in_code_block = False
                     else:
@@ -1668,24 +2262,62 @@ a:hover {
                 
                 if line_stripped.startswith('#'):
                     level = len(line_stripped) - len(line_stripped.lstrip('#'))
-                    text = line_stripped.lstrip('#').strip()
-                    lvl = min(level, 4)
-                    p = doc.add_heading("", level=lvl)
-                    p.add_run(text)
+                    heading_text_raw = line_stripped.lstrip('#').strip()
+                    
+                    if use_advanced:
+                        heading_text, heading_anchor = self._extract_heading_text_and_anchor(heading_text_raw)
+                    else:
+                        heading_text = heading_text_raw
+                        heading_anchor = None
+                    
+                    lvl = min(level, 6)
+                    p = doc.add_heading(heading_text, level=lvl)
+                    
+                    # Add bookmark if anchor exists
+                    if use_advanced and heading_anchor:
+                        normalized = self._normalize_anchor_for_docx(heading_anchor)
+                        anchor_map[heading_anchor] = normalized
+                        self._add_bookmark(p, normalized, bookmark_id)
+                        bookmark_id += 1
+                    
+                    # Add page break for numbered headings if enabled
+                    if use_advanced and needs_page_break:
+                        try:
+                            from docx.enum.text import WD_BREAK
+                            para = doc.add_paragraph()
+                            run = para.add_run()
+                            run.add_break(WD_BREAK.PAGE)
+                        except Exception:
+                            pass
+                        needs_page_break = False
+                    
+                    previous_was_content = False
                 
                 elif line_stripped.startswith(('- ', '* ', '+ ')):
                     text = line_stripped[2:].strip()
                     p = doc.add_paragraph(style='List Bullet')
-                    p.add_run(text)
+                    if use_advanced:
+                        self._add_formatted_text(p, text, anchor_map=anchor_map)
+                    else:
+                        p.add_run(text)
+                    previous_was_content = True
                 
                 elif re.match(r'^\d+\.\s', line_stripped):
                     text = re.sub(r'^\d+\.\s', '', line_stripped)
                     p = doc.add_paragraph(style='List Number')
-                    p.add_run(text)
+                    if use_advanced:
+                        self._add_formatted_text(p, text, anchor_map=anchor_map)
+                    else:
+                        p.add_run(text)
+                    previous_was_content = True
                 
                 elif line_stripped:
                     p = doc.add_paragraph()
-                    p.add_run(line_stripped)
+                    if use_advanced:
+                        self._add_formatted_text(p, line_stripped, anchor_map=anchor_map)
+                    else:
+                        p.add_run(line_stripped)
+                    previous_was_content = True
                 
                 i += 1
             
@@ -1716,13 +2348,17 @@ class MarkdownConverterGUI:
         # Initialize CSS preset before creating converter
         self.css_preset = "default"  # Current CSS preset
         
+        # Initialize settings manager first
+        self.settings_manager = SettingsManager()
+        
         # Check if markdown is available before creating converter
         if not MARKDOWN_AVAILABLE:
             self.show_missing_dependency_error()
             self.converter = None
         else:
             try:
-                self.converter = MarkdownConverter(css_preset=self.css_preset)
+                # Create converter with settings
+                self.converter = MarkdownConverter(css_preset=self.css_preset, settings_manager=self.settings_manager)
             except ImportError as e:
                 self.show_missing_dependency_error(str(e))
                 self.converter = None
@@ -1737,6 +2373,9 @@ class MarkdownConverterGUI:
         self.setup_ui()
         if HAS_DND:
             self.setup_drag_drop()
+        
+        # Save settings on exit
+        self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
     
     def show_missing_dependency_error(self, error_msg=None):
         """Show error dialog for missing dependencies"""
@@ -1794,15 +2433,18 @@ class MarkdownConverterGUI:
         self.create_rounded_button(toolbar, "💾 Save as PDF", self.save_pdf, "success").pack(side='left', padx=UISpacing.XS)
         self.create_rounded_button(toolbar, "📄 Save as DOCX", self.save_docx, "primary").pack(side='left', padx=UISpacing.XS)
         self.create_rounded_button(toolbar, "🌐 Browser Preview", self.open_in_browser, "secondary").pack(side='left', padx=UISpacing.XS)
+        self.create_rounded_button(toolbar, "⚙️ Settings", self.show_settings_dialog, "secondary").pack(side='left', padx=UISpacing.XS)
         
         # PDF settings
         pdf_settings = tk.Frame(main_frame, bg=UIColors.BG_PRIMARY)
         pdf_settings.pack(fill='x', pady=(0, UISpacing.MD))
         
         tk.Label(pdf_settings, text="PDF Engine:", bg=UIColors.BG_PRIMARY, font=UIFonts.SMALL).pack(side='left', padx=UISpacing.SM)
-        self.pdf_engine = tk.StringVar(value="reportlab")
-        tk.Radiobutton(pdf_settings, text="ReportLab", variable=self.pdf_engine, value="reportlab", bg=UIColors.BG_PRIMARY).pack(side='left', padx=UISpacing.XS)
+        self.pdf_engine = tk.StringVar(value="browser")  # Browser engine as default
         tk.Radiobutton(pdf_settings, text="Browser", variable=self.pdf_engine, value="browser", bg=UIColors.BG_PRIMARY).pack(side='left', padx=UISpacing.XS)
+        if _try_import_weasyprint():
+            tk.Radiobutton(pdf_settings, text="WeasyPrint", variable=self.pdf_engine, value="weasyprint", bg=UIColors.BG_PRIMARY).pack(side='left', padx=UISpacing.XS)
+        tk.Radiobutton(pdf_settings, text="ReportLab", variable=self.pdf_engine, value="reportlab", bg=UIColors.BG_PRIMARY).pack(side='left', padx=UISpacing.XS)
         
         tk.Label(pdf_settings, text="Layout:", bg=UIColors.BG_PRIMARY, font=UIFonts.SMALL).pack(side='left', padx=(UISpacing.LG, UISpacing.SM))
         self.pdf_orientation = tk.StringVar(value="portrait")
@@ -2323,10 +2965,10 @@ def hello_world():
             self.load_file(file_path)
     
     def load_file(self, file_path):
-        """Load content from a file"""
+        """Load content from a file (Feature 1: Encoding Detection)"""
         try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                content = f.read()
+            # Use encoding detection instead of hardcoded UTF-8
+            content = _read_file_with_encoding_detection(file_path)
             
             self.text_input.delete("1.0", tk.END)
             self.text_input.insert("1.0", content)
@@ -2352,10 +2994,14 @@ def hello_world():
             messagebox.showwarning("Warning", "No content to export!")
             return
         
-        # Determine initial directory from current file or use current working directory
+        # Determine initial directory and filename from current file or use current working directory
         initial_dir = None
+        initial_file = None
         if self.current_file_path:
             initial_dir = os.path.dirname(os.path.abspath(self.current_file_path))
+            # Auto-set filename based on loaded file basename
+            base_name = os.path.splitext(os.path.basename(self.current_file_path))[0]
+            initial_file = f"{base_name}.pdf"
         elif os.path.exists(os.getcwd()):
             initial_dir = os.getcwd()
         
@@ -2363,30 +3009,55 @@ def hello_world():
             title="Save as PDF",
             defaultextension=".pdf",
             filetypes=[("PDF files", "*.pdf"), ("All files", "*.*")],
-            initialdir=initial_dir
+            initialdir=initial_dir,
+            initialfile=initial_file
         )
         
         if file_path:
             self.status_var.set("Exporting to PDF...")
+            # Set wait cursor during processing
+            self.root.config(cursor="wait")
             self.root.update()
             
-            orientation = self.pdf_orientation.get()
-            engine = self.pdf_engine.get()
-            
-            success = False
-            if engine == "browser":
-                html = self.current_html or self.converter.markdown_to_html(md_content)
-                success = self.converter.html_to_pdf_browser(html, file_path, orientation=orientation)
-            
-            if not success and REPORTLAB_AVAILABLE:
-                success = self.converter.markdown_to_pdf_reportlab(md_content, file_path, orientation)
-            
-            if success:
-                self.status_var.set(f"PDF saved: {os.path.basename(file_path)}")
-                messagebox.showinfo("Success", f"PDF exported successfully!\n{file_path}")
-            else:
-                self.status_var.set("PDF export failed")
-                messagebox.showerror("Error", "PDF export failed. Please check console for details.")
+            try:
+                orientation = self.pdf_orientation.get()
+                engine = self.pdf_engine.get()
+                
+                success = False
+                # Try WeasyPrint first if selected (Feature 6)
+                if engine == "weasyprint" and _try_import_weasyprint():
+                    success = self.converter.markdown_to_pdf_weasyprint(md_content, file_path, orientation=orientation)
+                elif engine == "browser":
+                    html = self.current_html or self.converter.markdown_to_html(md_content)
+                    success = self.converter.html_to_pdf_browser(html, file_path, orientation=orientation)
+                
+                # Fallback to ReportLab if other methods failed
+                if not success and REPORTLAB_AVAILABLE:
+                    success = self.converter.markdown_to_pdf_reportlab(md_content, file_path, orientation, keep_icons=True)
+                
+                if success:
+                    self.status_var.set(f"PDF saved: {os.path.basename(file_path)}")
+                    # Auto-open PDF if enabled
+                    if self.settings_manager.get('autoopen_enabled', True):
+                        try:
+                            os.startfile(file_path)  # Windows
+                        except AttributeError:
+                            # Unix/Linux/Mac
+                            try:
+                                subprocess.run(['xdg-open', file_path], check=False)
+                            except Exception:
+                                try:
+                                    subprocess.run(['open', file_path], check=False)  # Mac
+                                except Exception:
+                                    pass
+                    else:
+                        messagebox.showinfo("Success", f"PDF exported successfully!\n{file_path}")
+                else:
+                    self.status_var.set("PDF export failed")
+                    messagebox.showerror("Error", "PDF export failed. Please check console for details.")
+            finally:
+                # Always restore cursor
+                self.root.config(cursor="")
     
     def save_docx(self):
         """Save content as DOCX"""
@@ -2399,10 +3070,14 @@ def hello_world():
             messagebox.showwarning("Warning", "No content to export!")
             return
         
-        # Determine initial directory from current file or use current working directory
+        # Determine initial directory and filename from current file or use current working directory
         initial_dir = None
+        initial_file = None
         if self.current_file_path:
             initial_dir = os.path.dirname(os.path.abspath(self.current_file_path))
+            # Auto-set filename based on loaded file basename
+            base_name = os.path.splitext(os.path.basename(self.current_file_path))[0]
+            initial_file = f"{base_name}.docx"
         elif os.path.exists(os.getcwd()):
             initial_dir = os.getcwd()
         
@@ -2410,18 +3085,246 @@ def hello_world():
             title="Save as DOCX",
             defaultextension=".docx",
             filetypes=[("Word documents", "*.docx"), ("All files", "*.*")],
-            initialdir=initial_dir
+            initialdir=initial_dir,
+            initialfile=initial_file
         )
         
         if file_path:
             self.status_var.set("Exporting to DOCX...")
+            # Set wait cursor during processing
+            self.root.config(cursor="wait")
             self.root.update()
             
-            if self.converter.markdown_to_docx(md_content, file_path):
-                self.status_var.set(f"DOCX saved: {os.path.basename(file_path)}")
-                messagebox.showinfo("Success", f"DOCX exported successfully!\n{file_path}")
-            else:
-                self.status_var.set("DOCX export failed")
+            try:
+                if self.converter.markdown_to_docx(md_content, file_path):
+                    self.status_var.set(f"DOCX saved: {os.path.basename(file_path)}")
+                    # Auto-open DOCX if enabled
+                    if self.settings_manager.get('autoopen_enabled', True):
+                        try:
+                            os.startfile(file_path)  # Windows
+                        except AttributeError:
+                            # Unix/Linux/Mac
+                            try:
+                                subprocess.run(['xdg-open', file_path], check=False)
+                            except Exception:
+                                try:
+                                    subprocess.run(['open', file_path], check=False)  # Mac
+                                except Exception:
+                                    pass
+                    else:
+                        messagebox.showinfo("Success", f"DOCX exported successfully!\n{file_path}")
+                else:
+                    self.status_var.set("DOCX export failed")
+            finally:
+                # Always restore cursor
+                self.root.config(cursor="")
+    
+    def show_settings_dialog(self):
+        """Show settings dialog for optional features"""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Settings")
+        dialog.geometry("600x500")
+        dialog.configure(bg=UIColors.BG_SECONDARY)
+        dialog.transient(self.root)
+        dialog.grab_set()
+        dialog.lift()
+        dialog.focus_force()
+        
+        # Center on parent
+        dialog.update_idletasks()
+        x = self.root.winfo_x() + (self.root.winfo_width() - 600) // 2
+        y = self.root.winfo_y() + (self.root.winfo_height() - 500) // 2
+        dialog.geometry(f"+{x}+{y}")
+        
+        # Main frame
+        main_frame = tk.Frame(dialog, bg=UIColors.BG_SECONDARY, padx=UISpacing.MD, pady=UISpacing.MD)
+        main_frame.pack(fill='both', expand=True)
+        
+        # Title
+        title_label = tk.Label(
+            main_frame,
+            text="⚙️ Converter Settings",
+            font=UIFonts.TITLE,
+            bg=UIColors.BG_SECONDARY,
+            fg=UIColors.PRIMARY
+        )
+        title_label.pack(pady=(0, UISpacing.LG))
+        
+        # Settings variables
+        page_breaks_var = tk.BooleanVar(value=self.settings_manager.get('page_breaks_enabled', True))
+        preprocessing_var = tk.BooleanVar(value=self.settings_manager.get('preprocessing_enabled', True))
+        advanced_docx_var = tk.BooleanVar(value=self.settings_manager.get('advanced_docx_enabled', True))
+        font_size_var = tk.BooleanVar(value=self.settings_manager.get('font_size_options_enabled', True))
+        font_size_value = tk.IntVar(value=self.settings_manager.get('default_font_size', 10))
+        narrow_margins_var = tk.BooleanVar(value=self.settings_manager.get('docx_narrow_margins', False))
+        auto_h2_var = tk.BooleanVar(value=self.settings_manager.get('auto_page_break_h2', True))
+        auto_h3_var = tk.BooleanVar(value=self.settings_manager.get('auto_page_break_h3', True))
+        autoopen_var = tk.BooleanVar(value=self.settings_manager.get('autoopen_enabled', True))
+        
+        # Feature 2: Page Breaks
+        page_breaks_frame = tk.LabelFrame(
+            main_frame,
+            text=" Page Breaks (Feature 2) ",
+            font=UIFonts.HEADING,
+            bg=UIColors.BG_PRIMARY,
+            fg=UIColors.TEXT_PRIMARY,
+            padx=UISpacing.MD,
+            pady=UISpacing.SM
+        )
+        page_breaks_frame.pack(fill='x', pady=UISpacing.SM)
+        
+        tk.Checkbutton(
+            page_breaks_frame,
+            text="Enable page break support",
+            variable=page_breaks_var,
+            bg=UIColors.BG_PRIMARY,
+            font=UIFonts.BODY
+        ).pack(anchor='w', pady=UISpacing.XS)
+        tk.Checkbutton(
+            page_breaks_frame,
+            text="Auto page break before numbered H2 headings (e.g., '1.', '2.')",
+            variable=auto_h2_var,
+            bg=UIColors.BG_PRIMARY,
+            font=UIFonts.BODY
+        ).pack(anchor='w', pady=UISpacing.XS)
+        tk.Checkbutton(
+            page_breaks_frame,
+            text="Auto page break before numbered H3 sub-sections (e.g., '1.1', '2.3')",
+            variable=auto_h3_var,
+            bg=UIColors.BG_PRIMARY,
+            font=UIFonts.BODY
+        ).pack(anchor='w', pady=UISpacing.XS)
+        
+        # Feature 3: Preprocessing
+        preprocessing_frame = tk.LabelFrame(
+            main_frame,
+            text=" Content Preprocessing (Feature 3) ",
+            font=UIFonts.HEADING,
+            bg=UIColors.BG_PRIMARY,
+            fg=UIColors.TEXT_PRIMARY,
+            padx=UISpacing.MD,
+            pady=UISpacing.SM
+        )
+        preprocessing_frame.pack(fill='x', pady=UISpacing.SM)
+        
+        tk.Checkbutton(
+            preprocessing_frame,
+            text="Remove horizontal rules (---, ***) and normalize line breaks",
+            variable=preprocessing_var,
+            bg=UIColors.BG_PRIMARY,
+            font=UIFonts.BODY
+        ).pack(anchor='w', pady=UISpacing.XS)
+        
+        # Feature 4: Advanced DOCX
+        docx_frame = tk.LabelFrame(
+            main_frame,
+            text=" Advanced DOCX Features (Feature 4) ",
+            font=UIFonts.HEADING,
+            bg=UIColors.BG_PRIMARY,
+            fg=UIColors.TEXT_PRIMARY,
+            padx=UISpacing.MD,
+            pady=UISpacing.SM
+        )
+        docx_frame.pack(fill='x', pady=UISpacing.SM)
+        
+        tk.Checkbutton(
+            docx_frame,
+            text="Enable advanced DOCX features (bookmarks, hyperlinks, formatting)",
+            variable=advanced_docx_var,
+            bg=UIColors.BG_PRIMARY,
+            font=UIFonts.BODY
+        ).pack(anchor='w', pady=UISpacing.XS)
+        tk.Checkbutton(
+            docx_frame,
+            text="Use narrow margins (0.5 inch) in DOCX",
+            variable=narrow_margins_var,
+            bg=UIColors.BG_PRIMARY,
+            font=UIFonts.BODY
+        ).pack(anchor='w', pady=UISpacing.XS)
+        
+        # Feature 5: Font Size
+        font_frame = tk.LabelFrame(
+            main_frame,
+            text=" Font Size Options (Feature 5) ",
+            font=UIFonts.HEADING,
+            bg=UIColors.BG_PRIMARY,
+            fg=UIColors.TEXT_PRIMARY,
+            padx=UISpacing.MD,
+            pady=UISpacing.SM
+        )
+        font_frame.pack(fill='x', pady=UISpacing.SM)
+        
+        tk.Checkbutton(
+            font_frame,
+            text="Enable font size options",
+            variable=font_size_var,
+            bg=UIColors.BG_PRIMARY,
+            font=UIFonts.BODY
+        ).pack(anchor='w', pady=UISpacing.XS)
+        
+        font_size_frame = tk.Frame(font_frame, bg=UIColors.BG_PRIMARY)
+        font_size_frame.pack(anchor='w', padx=UISpacing.LG, pady=UISpacing.XS)
+        tk.Label(font_size_frame, text="Default font size:", bg=UIColors.BG_PRIMARY, font=UIFonts.BODY).pack(side='left', padx=UISpacing.SM)
+        for size in [9, 10, 11, 12, 14]:
+            tk.Radiobutton(
+                font_size_frame,
+                text=f"{size}pt",
+                variable=font_size_value,
+                value=size,
+                bg=UIColors.BG_PRIMARY,
+                font=UIFonts.BODY
+            ).pack(side='left', padx=UISpacing.XS)
+        
+        # Auto-open settings
+        autoopen_frame = tk.LabelFrame(
+            main_frame,
+            text=" Export Options ",
+            font=UIFonts.HEADING,
+            bg=UIColors.BG_PRIMARY,
+            fg=UIColors.TEXT_PRIMARY,
+            padx=UISpacing.MD,
+            pady=UISpacing.SM
+        )
+        autoopen_frame.pack(fill='x', pady=UISpacing.SM)
+        
+        tk.Checkbutton(
+            autoopen_frame,
+            text="Automatically open PDF/DOCX after generation",
+            variable=autoopen_var,
+            bg=UIColors.BG_PRIMARY,
+            font=UIFonts.BODY
+        ).pack(anchor='w', pady=UISpacing.XS)
+        
+        # Buttons
+        button_frame = tk.Frame(main_frame, bg=UIColors.BG_SECONDARY)
+        button_frame.pack(fill='x', pady=(UISpacing.LG, 0))
+        
+        def save_settings():
+            self.settings_manager.set('page_breaks_enabled', page_breaks_var.get())
+            self.settings_manager.set('preprocessing_enabled', preprocessing_var.get())
+            self.settings_manager.set('advanced_docx_enabled', advanced_docx_var.get())
+            self.settings_manager.set('font_size_options_enabled', font_size_var.get())
+            self.settings_manager.set('default_font_size', font_size_value.get())
+            self.settings_manager.set('docx_narrow_margins', narrow_margins_var.get())
+            self.settings_manager.set('auto_page_break_h2', auto_h2_var.get())
+            self.settings_manager.set('auto_page_break_h3', auto_h3_var.get())
+            self.settings_manager.set('autoopen_enabled', autoopen_var.get())
+            
+            # Update converter settings
+            if self.converter:
+                self.converter.settings = self.settings_manager
+            
+            self.settings_manager.save_settings()
+            dialog.destroy()
+            self.status_var.set("Settings saved")
+        
+        self.create_rounded_button(button_frame, "Save", save_settings, "success").pack(side='right', padx=UISpacing.SM)
+        self.create_rounded_button(button_frame, "Cancel", dialog.destroy, "secondary").pack(side='right', padx=UISpacing.SM)
+    
+    def on_closing(self):
+        """Handle window closing - save settings"""
+        self.settings_manager.save_settings()
+        self.root.destroy()
     
     def open_in_browser(self):
         """Open current HTML in browser"""

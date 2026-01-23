@@ -1877,15 +1877,23 @@ class PDFManualSplitterApp:
         
         self.result_text.insert(tk.END, f"→ Starting split into {len(splits)} documents...\n")
         
-        success = split_pdf_file(pdf_path, splits, output_folder, result_text=self.result_text)
+        # Set wait cursor during processing
+        self.root.config(cursor="wait")
+        self.root.update()
         
-        if success:
-            self.result_text.insert(tk.END, f"\n✓ PDF successfully split into {len(splits)} documents!\n")
-            self.result_text.insert(tk.END, f"→ Output folder: {output_folder}\n\n")
-            messagebox.showinfo("Success", f"PDF split into {len(splits)} documents!\n\nOutput: {output_folder}")
-        else:
-            self.result_text.insert(tk.END, f"\n✗ Error splitting PDF\n\n")
-            messagebox.showerror("Error", "Error splitting PDF")
+        try:
+            success = split_pdf_file(pdf_path, splits, output_folder, result_text=self.result_text)
+            
+            if success:
+                self.result_text.insert(tk.END, f"\n✓ PDF successfully split into {len(splits)} documents!\n")
+                self.result_text.insert(tk.END, f"→ Output folder: {output_folder}\n\n")
+                messagebox.showinfo("Success", f"PDF split into {len(splits)} documents!\n\nOutput: {output_folder}")
+            else:
+                self.result_text.insert(tk.END, f"\n✗ Error splitting PDF\n\n")
+                messagebox.showerror("Error", "Error splitting PDF")
+        finally:
+            # Always restore cursor
+            self.root.config(cursor="")
     
     def clear_results(self):
         """Clear the results text area."""

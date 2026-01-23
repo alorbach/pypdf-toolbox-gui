@@ -938,9 +938,12 @@ class PDFCombinerApp:
         if not output_path:
             return
         
+        # Set wait cursor during processing
+        self.root.config(cursor="wait")
+        self.root.update()
+        
         try:
             self.status_var.set("Creating combined PDF...")
-            self.root.update()
             
             pdf_writer = PdfWriter()
             
@@ -963,6 +966,9 @@ class PDFCombinerApp:
             messagebox.showerror("Error", error_msg)
             logger.error(error_msg)
             self.status_var.set("Error saving file")
+        finally:
+            # Always restore cursor
+            self.root.config(cursor="")
     
     def auto_select_alternate(self):
         """Auto-select pages alternating between files: file1 p1, file2 p1, file1 p2, file2 p2, etc."""
