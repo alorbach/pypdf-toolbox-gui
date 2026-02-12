@@ -27,9 +27,9 @@ A collection of Python-based PDF utility tools with a unified graphical launcher
 | **PDF Splitter**<br/>Manually split PDFs by selecting split points with visual thumbnail preview | **PDF Visual Combiner**<br/>Combine multiple PDFs by visually selecting individual pages from thumbnails | **PDF Text Extractor**<br/>Extract text from PDFs using Python, OCR, or Azure AI |
 | [`launch_pdf_splitter`](doc/pdf-splitter/) | [`launch_pdf_visual_combiner`](doc/pdf-combiner/) | [`launch_pdf_text_extractor`](doc/text-extractor/) |
 | | | |
-| [![PDF OCR](doc/pdf-ocr/screenshots/01-main-window.png)](doc/pdf-ocr/) | [![Markdown Converter](doc/md-converter/screenshots/01-main-window.png)](doc/md-converter/) | |
-| **PDF OCR**<br/>Add OCR text recognition to PDFs and convert images to searchable PDFs | **Markdown Converter**<br/>Convert Markdown to PDF/DOCX with live HTML preview and style presets | |
-| [`launch_pdf_ocr`](doc/pdf-ocr/) | [`launch_pdf_md_converter`](doc/md-converter/) | |
+| [![PDF OCR](doc/pdf-ocr/screenshots/01-main-window.png)](doc/pdf-ocr/) | [![Markdown Converter](doc/md-converter/screenshots/01-main-window.png)](doc/md-converter/) | [![PDF Image Print](doc/pdf-image-print/screenshots/01-main-window.png)](doc/pdf-image-print/) |
+| **PDF OCR**<br/>Add OCR text recognition to PDFs and convert images to searchable PDFs | **Markdown Converter**<br/>Convert Markdown to PDF/DOCX with live HTML preview and style presets | **PDF Image Print**<br/>Prepare images for double-sided printing; export to PDF or Word |
+| [`launch_pdf_ocr`](doc/pdf-ocr/) | [`launch_pdf_md_converter`](doc/md-converter/) | [`launch_pdf_image_print`](doc/pdf-image-print/) |
 
 </div>
 
@@ -39,6 +39,7 @@ A collection of Python-based PDF utility tools with a unified graphical launcher
 - **PDF Text Extractor**: Multiple extraction methods (Python, OCR, Azure AI), multiple output formats (Text, Markdown, JSON)
 - **PDF OCR**: Add searchable text layer to PDFs, convert images to searchable PDFs, support for multiple languages
 - **Markdown Converter**: Convert Markdown to PDF/DOCX with live HTML preview, 6 style presets, and multiple export options
+- **PDF Image Print**: Arrange images in front/back pairs for duplex printing, export to PDF or Word
 
 ### Planned Tools
 

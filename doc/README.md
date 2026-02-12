@@ -11,6 +11,7 @@ This folder contains documentation for all utilities in the PyPDF Toolbox.
 | PDF Visual Combiner | Combine multiple PDFs by visually selecting individual pages from thumbnails | [pdf-combiner/](pdf-combiner/) |
 | PDF Text Extractor | Extract text from PDFs using Python, OCR, or Azure AI | [text-extractor/](text-extractor/) |
 | PDF OCR | Add OCR text recognition to PDFs and convert images to searchable PDFs | [pdf-ocr/](pdf-ocr/) |
+| PDF Image Print | Prepare images for double-sided printing; export to PDF or Word | [pdf-image-print/](pdf-image-print/) |
 | Markdown Converter | Convert Markdown files to PDF or DOCX with modern styling | [md-converter/](md-converter/) |
 
 ## Adding Screenshots

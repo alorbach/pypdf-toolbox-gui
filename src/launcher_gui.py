@@ -512,7 +512,7 @@ class PDFToolLauncher:
             return "split_merge"
         elif any(keyword in name_lower for keyword in ["extract", "text", "ocr", "read"]):
             return "extract_analyze"
-        elif any(keyword in name_lower for keyword in ["convert", "transform", "rotate", "resize"]):
+        elif any(keyword in name_lower for keyword in ["convert", "transform", "rotate", "resize", "print"]):
             return "convert_transform"
         elif any(keyword in name_lower for keyword in ["compress", "optimize", "reduce"]):
             return "optimize"
@@ -542,6 +542,7 @@ class PDFToolLauncher:
                 "pdf_visual_combiner": "pdf_visual_combiner",  # Maps to pdf_combiner module
                 "pdf_splitter": "pdf_splitter",  # Maps to pdf_manual_splitter module
                 "pdf_md_converter": "pdf_md_converter",
+                "pdf_image_print": "pdf_image_print",
             }
             
             for launcher_name, tool_name in tool_mapping.items():
@@ -598,6 +599,8 @@ class PDFToolLauncher:
             "remove": "🗑️",
             "add": "➕",
             "info": "ℹ️",
+            "print": "🖨️",
+            "image": "🖼️",
         }
         
         name_lower = name.lower()

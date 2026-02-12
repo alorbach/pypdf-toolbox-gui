@@ -10,7 +10,7 @@ Use this checklist when publishing a GitHub Release for the Windows executable.
 
 ## Create Release Tag
 
-- [ ] Create tag locally: `git tag vX.Y.Z`
+- [ ] Create tag locally: `git tag -a vX.Y.Z`
 - [ ] Push tag: `git push origin vX.Y.Z`
 
 ## GitHub Actions Build

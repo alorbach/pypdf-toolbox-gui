@@ -51,6 +51,7 @@ TOOL_MODULES = {
     "pdf_splitter": "pdf_manual_splitter",
     "pdf_manual_splitter": "pdf_manual_splitter",
     "pdf_md_converter": "pdf_md_converter",
+    "pdf_image_print": "pdf_image_print",
 }
 
 # Map launcher names to tool names
@@ -61,6 +62,7 @@ LAUNCHER_TO_TOOL = {
     "pdf_combiner": "pdf_combiner",
     "pdf_splitter": "pdf_manual_splitter",
     "pdf_md_converter": "pdf_md_converter",
+    "pdf_image_print": "pdf_image_print",
 }
 
 
@@ -149,6 +151,8 @@ def run_tool(tool_name):
                 from pdf_manual_splitter import main as tool_main
             elif module_name == "pdf_md_converter":
                 from pdf_md_converter import main as tool_main
+            elif module_name == "pdf_image_print":
+                from pdf_image_print import main as tool_main
             else:
                 print(f"[ERROR] Tool module '{module_name}' not implemented in entry point")
                 sys.exit(1)
