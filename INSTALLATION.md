@@ -34,9 +34,14 @@ Before building the executable, ensure you have:
 ### Optional (for specific features)
 
 - **Tesseract OCR** (for OCR functionality)
-  - Download from [GitHub releases](https://github.com/UB-Mannheim/tesseract/wiki)
-  - Install and add to PATH
+  - **Recommended** (Windows 10/11): `winget install --id UB-Mannheim.TesseractOCR -e`
+  - **Chocolatey**: `choco install tesseract`
+  - **Manual**: Download from [UB-Mannheim](https://github.com/UB-Mannheim/tesseract/wiki), install, and add to PATH
   - Required for: PDF OCR tool, OCR-based text extraction
+
+- **Ghostscript** (optional, for PDF image optimization in OCR tool)
+  - **Recommended**: `winget install -e --id ArtifexSoftware.GhostScript`
+  - Enables lossless image optimization when processing PDFs with OCR
 
 - **Poppler** (for PDF to image conversion)
   - Download from [poppler-windows](https://github.com/oschwartz10612/poppler-windows/releases)
@@ -256,8 +261,19 @@ PyPDF_Toolbox.exe --help
 
 3. **Check dependencies**
    - Some tools need external programs:
-     - OCR: Install Tesseract OCR
+     - OCR: Install Tesseract OCR (`winget install --id UB-Mannheim.TesseractOCR -e`)
      - PDF to Image: Install Poppler
+
+#### "Tesseract not found" or OCR tool skips all files
+
+**Solution:**
+1. Install Tesseract OCR (required for the PDF OCR tool):
+   ```batch
+   winget install --id UB-Mannheim.TesseractOCR -e
+   ```
+2. Restart the application after installation
+3. If using Chocolatey instead: `choco install tesseract`
+4. Manual install: Download from [UB-Mannheim Tesseract Wiki](https://github.com/UB-Mannheim/tesseract/wiki)
 
 #### "Module not found" errors
 

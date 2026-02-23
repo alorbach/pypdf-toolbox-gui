@@ -26,7 +26,7 @@ import shutil
 import re
 import subprocess
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 import tkinter as tk
 from tkinter import filedialog, messagebox, scrolledtext
@@ -43,8 +43,11 @@ except ImportError:
 # OCR support
 try:
     import ocrmypdf
+    import pytesseract
     OCRMYPDF_AVAILABLE = True
 except ImportError:
+    ocrmypdf = None  # type: ignore
+    pytesseract = None  # type: ignore
     OCRMYPDF_AVAILABLE = False
     print("[WARNING] ocrmypdf not available. Install with: pip install ocrmypdf")
 
@@ -63,6 +66,100 @@ try:
 except ImportError:
     IMG2PDF_AVAILABLE = False
     print("[WARNING] img2pdf not available. Install with: pip install img2pdf")
+
+
+# ============================================================================
+# Tesseract Availability Check
+# ============================================================================
+
+# Path to tesseract.exe when found in common install locations (not in PATH)
+TESSERACT_PATH: Optional[str] = None
+
+
+def _get_common_tesseract_paths() -> List[str]:
+    """Return common Windows install paths for Tesseract OCR."""
+    if sys.platform != "win32":
+        return []
+    drive = os.environ.get("SystemDrive", "C:")
+    return [
+        os.path.join(drive, r"Program Files\Tesseract-OCR\tesseract.exe"),
+        os.path.join(drive, r"Program Files (x86)\Tesseract-OCR\tesseract.exe"),
+    ]
+
+
+def find_tesseract_path() -> Optional[str]:
+    """Find Tesseract executable - check PATH first, then common Windows paths.
+    
+    Returns:
+        Full path to tesseract.exe if found, None otherwise.
+    """
+    # Try PATH first
+    try:
+        result = subprocess.run(
+            ["tesseract", "--version"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode == 0:
+            return "tesseract"  # In PATH
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        pass
+
+    # Try common Windows install paths (handles app running before PATH was updated)
+    for path in _get_common_tesseract_paths():
+        if os.path.isfile(path):
+            return path
+    return None
+
+
+def check_tesseract_available() -> Tuple[bool, Optional[str]]:
+    """Check if Tesseract OCR is installed (PATH or common Windows paths).
+    
+    Returns:
+        Tuple of (is_available, path_or_none). path is set when found in common location.
+    """
+    global TESSERACT_PATH
+    path = find_tesseract_path()
+    if path is None:
+        TESSERACT_PATH = None
+        return False, None
+    if path != "tesseract":
+        TESSERACT_PATH = path
+    else:
+        TESSERACT_PATH = None  # In PATH, no need to set
+    return True, path
+
+
+def check_ghostscript_available() -> bool:
+    """Check if Ghostscript (gswin64c) is installed - used for optional image optimization."""
+    cmd = ["gswin64c", "--version"] if sys.platform == "win32" else ["gs", "--version"]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+        return result.returncode == 0
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        return False
+
+
+def get_tesseract_install_instructions() -> str:
+    """Get platform-specific Tesseract installation instructions."""
+    if sys.platform == "win32":
+        return (
+            "Tesseract OCR must be installed separately on Windows.\n\n"
+            "Install using one of these methods:\n\n"
+            "1. winget (Windows 10/11, recommended):\n"
+            "   winget install --id UB-Mannheim.TesseractOCR -e\n\n"
+            "2. Chocolatey:\n"
+            "   choco install tesseract\n\n"
+            "3. Manual download:\n"
+            "   https://github.com/UB-Mannheim/tesseract/wiki\n"
+            "   Download the installer, run it, and add the install folder to PATH.\n\n"
+            "After installing, restart this application and try again."
+        )
+    elif sys.platform == "darwin":
+        return "Install Tesseract: brew install tesseract"
+    else:
+        return "Install Tesseract: sudo apt install tesseract-ocr  (Debian/Ubuntu)"
 
 
 # ============================================================================
@@ -212,20 +309,30 @@ def convert_images_to_pdf(image_files: List[str], output_pdf: str) -> bool:
         return False
 
 
-def process_pdf_with_ocr(pdf_path: str, language: str = 'eng', output_callback=None) -> bool:
+def process_pdf_with_ocr(
+    pdf_path: str,
+    language: str = 'eng',
+    output_callback=None,
+    optimize_level: int = 0,
+) -> bool:
     """Process a single PDF file with OCR.
     
     Args:
         pdf_path: Path to PDF file
         language: OCR language code
         output_callback: Optional callback function(line) to receive output lines
+        optimize_level: 0=no optimization (no Ghostscript), 1=lossless (requires Ghostscript)
     
     Returns:
         True if successful, False otherwise
     """
     if not OCRMYPDF_AVAILABLE:
         return False
-    
+
+    # Configure pytesseract to use Tesseract when found in common path (not in PATH)
+    if TESSERACT_PATH and pytesseract:
+        pytesseract.pytesseract.tesseract_cmd = TESSERACT_PATH
+
     try:
         # In frozen (exe) mode, avoid spawning sys.executable which relaunches the app.
         if getattr(sys, 'frozen', False):
@@ -235,7 +342,8 @@ def process_pdf_with_ocr(pdf_path: str, language: str = 'eng', output_callback=N
                     pdf_path,
                     skip_text=True,
                     output_type='pdf',
-                    language=language
+                    language=language,
+                    optimize=optimize_level,
                 )
                 return True
             except Exception as e:
@@ -253,18 +361,27 @@ def process_pdf_with_ocr(pdf_path: str, language: str = 'eng', output_callback=N
             sys.executable, "-m", "ocrmypdf",
             "--skip-text",  # Skip pages that already have text
             "--output-type", "pdf",
+            "--optimize", str(optimize_level),
             "--language", language,
             pdf_path,
             pdf_path  # Output to same file
         ]
-        
+
+        # When Tesseract is in common path but not in PATH, add it to subprocess env
+        env = None
+        if TESSERACT_PATH and TESSERACT_PATH != "tesseract":
+            env = os.environ.copy()
+            tesseract_dir = os.path.dirname(TESSERACT_PATH)
+            env["PATH"] = tesseract_dir + os.pathsep + env.get("PATH", "")
+
         process = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
             bufsize=1,
-            universal_newlines=True
+            universal_newlines=True,
+            env=env,
         )
         
         # Read output line by line and call callback if provided
@@ -309,7 +426,8 @@ def process_pdf_with_ocr(pdf_path: str, language: str = 'eng', output_callback=N
                 pdf_path,
                 skip_text=True,
                 output_type='pdf',
-                language=language
+                language=language,
+                optimize=optimize_level,
             )
             return True
         except Exception as e2:
@@ -319,13 +437,19 @@ def process_pdf_with_ocr(pdf_path: str, language: str = 'eng', output_callback=N
             return False
 
 
-def process_directory_images(directory: str, language: str = 'eng', output_callback=None) -> bool:
+def process_directory_images(
+    directory: str,
+    language: str = 'eng',
+    output_callback=None,
+    optimize_level: int = 0,
+) -> bool:
     """Process all images in a directory and convert them to a single PDF with OCR.
     
     Args:
         directory: Directory containing image files
         language: OCR language code
         output_callback: Optional callback function(line) to receive output lines
+        optimize_level: 0=no optimization, 1=lossless (requires Ghostscript)
     
     Returns:
         True if successful, False otherwise
@@ -355,7 +479,9 @@ def process_directory_images(directory: str, language: str = 'eng', output_callb
         return False
     
     # Perform OCR on the combined PDF
-    if not process_pdf_with_ocr(pdf_path, language, output_callback=output_callback):
+    if not process_pdf_with_ocr(
+        pdf_path, language, output_callback=output_callback, optimize_level=optimize_level
+    ):
         return False
     
     return True
@@ -385,6 +511,10 @@ class PDFOCRTool:
         self.processing = False
         self.language = 'eng'
         
+        # Check Tesseract availability (required for OCR)
+        self.tesseract_available, _ = check_tesseract_available()
+        self.ghostscript_available = check_ghostscript_available()
+
         # Setup UI
         self.setup_ui()
         
@@ -553,7 +683,75 @@ class PDFOCRTool:
                 fg=UIColors.TEXT_PRIMARY
             )
             rb.pack(side=tk.LEFT, padx=(0, UISpacing.MD))
-    
+
+        # Optional: Ghostscript (image optimization)
+        self.gs_row = tk.Frame(options_frame, bg=UIColors.BG_PRIMARY)
+        self.gs_row.grid(row=1, column=0, columnspan=2, padx=UISpacing.SM, pady=(0, UISpacing.SM), sticky="w")
+        self._build_gs_row()
+
+    def _build_gs_row(self):
+        """Build or rebuild the Ghostscript options row."""
+        for w in self.gs_row.winfo_children():
+            w.destroy()
+        tk.Label(
+            self.gs_row,
+            text="Optional: Ghostscript for image optimization",
+            font=UIFonts.SMALL,
+            bg=UIColors.BG_PRIMARY,
+            fg=UIColors.TEXT_SECONDARY,
+        ).pack(side=tk.LEFT)
+        if not self.ghostscript_available and sys.platform == "win32":
+            create_rounded_button(
+                self.gs_row, "Install Ghostscript", self._run_ghostscript_install, style="ghost"
+            ).pack(side=tk.LEFT, padx=(UISpacing.MD, 0))
+            create_rounded_button(
+                self.gs_row, "Check again", self._check_ghostscript_again, style="ghost"
+            ).pack(side=tk.LEFT, padx=(UISpacing.SM, 0))
+        elif not self.ghostscript_available:
+            tk.Label(
+                self.gs_row,
+                text="(install gs for optimization)",
+                font=UIFonts.SMALL,
+                bg=UIColors.BG_PRIMARY,
+                fg=UIColors.TEXT_MUTED,
+            ).pack(side=tk.LEFT, padx=(UISpacing.SM, 0))
+
+    def _check_ghostscript_again(self):
+        """Re-check Ghostscript availability after user installed it."""
+        self.ghostscript_available = check_ghostscript_available()
+        self._refresh_status_bar()
+        if self.ghostscript_available:
+            self._build_gs_row()
+            messagebox.showinfo(
+                "Ghostscript Found",
+                "Ghostscript was detected. Image optimization is now enabled.",
+                parent=self.root,
+            )
+
+    def _run_ghostscript_install(self):
+        """Run winget to install Ghostscript in a new console window (Windows)."""
+        if sys.platform != "win32":
+            return
+        try:
+            subprocess.Popen(
+                ["cmd", "/k", "winget", "install", "-e", "--id", "ArtifexSoftware.GhostScript"],
+                creationflags=subprocess.CREATE_NEW_CONSOLE,
+            )
+            messagebox.showinfo(
+                "Installation Started",
+                "A command window has opened to install Ghostscript.\n\n"
+                "Follow the prompts, then click 'Check again' when done.",
+                parent=self.root,
+            )
+        except Exception as e:
+            messagebox.showerror(
+                "Could Not Start Install",
+                f"Failed to run winget: {e}\n\n"
+                "Please run manually in Command Prompt:\n"
+                "winget install -e --id ArtifexSoftware.GhostScript",
+                parent=self.root,
+            )
+
     def create_results_area(self, parent):
         """Create results text area."""
         result_frame = tk.LabelFrame(
@@ -617,21 +815,20 @@ class PDFOCRTool:
         status_frame = tk.Frame(parent, bg=UIColors.BG_TERTIARY, pady=UISpacing.XS)
         status_frame.grid(row=5, column=0, sticky="ew")
         
-        # Status indicators
-        status_items = [
-            ("OCRmyPDF", OCRMYPDF_AVAILABLE),
-            ("Pillow", PIL_AVAILABLE),
-            ("img2pdf", IMG2PDF_AVAILABLE),
-            ("Drag&Drop", HAS_DND)
+        self._status_items = [
+            ("Tesseract", lambda: self.tesseract_available),
+            ("Ghostscript", lambda: self.ghostscript_available),
+            ("OCRmyPDF", lambda: OCRMYPDF_AVAILABLE),
+            ("Pillow", lambda: PIL_AVAILABLE),
+            ("img2pdf", lambda: IMG2PDF_AVAILABLE),
+            ("Drag&Drop", lambda: HAS_DND)
         ]
-        
         status_parts = []
-        for name, available in status_items:
-            icon = "✓" if available else "✗"
+        for name, get_available in self._status_items:
+            icon = "✓" if get_available() else "✗"
             status_parts.append(f"{icon} {name}")
-        
         status_text = "  •  ".join(status_parts)
-        
+
         self.status_label = tk.Label(
             status_frame,
             text=status_text,
@@ -640,7 +837,15 @@ class PDFOCRTool:
             fg=UIColors.TEXT_SECONDARY
         )
         self.status_label.pack(fill="x", padx=UISpacing.SM)
-    
+
+    def _refresh_status_bar(self):
+        """Update status bar text (e.g. after Tesseract is detected)."""
+        status_parts = []
+        for name, get_available in self._status_items:
+            icon = "✓" if get_available() else "✗"
+            status_parts.append(f"{icon} {name}")
+        self.status_label.config(text="  •  ".join(status_parts))
+
     def setup_drag_drop(self):
         """Setup drag and drop handlers."""
         self.drop_frame.drop_target_register(DND_FILES)
@@ -756,6 +961,10 @@ class PDFOCRTool:
             )
             return
         
+        if not self.tesseract_available:
+            self._show_tesseract_install_dialog()
+            return
+        
         # Check for image files
         has_images = any(f.lower().endswith(('.jpg', '.jpeg', '.png', '.tiff', '.bmp')) for f in files)
         if has_images and (not PIL_AVAILABLE or not IMG2PDF_AVAILABLE):
@@ -811,7 +1020,10 @@ class PDFOCRTool:
                         self.result_text.see(tk.END)
                         self.root.update()
                     
-                    if process_pdf_with_ocr(pdf_file, self.language, output_callback=log_output):
+                    optimize_lvl = 1 if self.ghostscript_available else 0
+                    if process_pdf_with_ocr(
+                        pdf_file, self.language, output_callback=log_output, optimize_level=optimize_lvl
+                    ):
                         self.result_text.insert(tk.END, f"  ✓ Successfully processed\n")
                         processed_count += 1
                     else:
@@ -856,7 +1068,10 @@ class PDFOCRTool:
                             self.root.update()
                         
                         # Process the temporary directory
-                        if process_directory_images(temp_dir, self.language, output_callback=log_output):
+                        optimize_lvl = 1 if self.ghostscript_available else 0
+                        if process_directory_images(
+                            temp_dir, self.language, output_callback=log_output, optimize_level=optimize_lvl
+                        ):
                             # Find the created PDF
                             pdf_files_in_dir = glob.glob(os.path.join(temp_dir, '*.pdf'))
                             if pdf_files_in_dir:
@@ -915,6 +1130,114 @@ class PDFOCRTool:
             self.root.config(cursor="")
             self.root.update()
     
+    def _run_winget_install(self):
+        """Run winget to install Tesseract in a new console window (Windows)."""
+        if sys.platform != "win32":
+            return
+        try:
+            subprocess.Popen(
+                ["cmd", "/k", "winget", "install", "--id", "UB-Mannheim.TesseractOCR", "-e"],
+                creationflags=subprocess.CREATE_NEW_CONSOLE,
+            )
+            messagebox.showinfo(
+                "Installation Started",
+                "A command window has opened to install Tesseract.\n\n"
+                "Follow the prompts, then restart this application when done.",
+                parent=self.root,
+            )
+        except Exception as e:
+            messagebox.showerror(
+                "Could Not Start Install",
+                f"Failed to run winget: {e}\n\n"
+                "Please run manually in Command Prompt:\n"
+                "winget install --id UB-Mannheim.TesseractOCR -e",
+                parent=self.root,
+            )
+
+    def _show_tesseract_install_dialog(self):
+        """Show dialog with Tesseract install options and optional auto-run button."""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Tesseract OCR Not Found")
+        dialog.configure(bg=UIColors.BG_SECONDARY)
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        width, height = 540, 420
+        dialog.geometry(f"{width}x{height}")
+        dialog.resizable(True, True)
+
+        # Content
+        msg_frame = tk.Frame(dialog, bg=UIColors.BG_SECONDARY, padx=UISpacing.LG, pady=UISpacing.LG)
+        msg_frame.pack(fill="both", expand=True)
+
+        tk.Label(
+            msg_frame,
+            text="Tesseract OCR is required for OCR processing but was not found.",
+            font=UIFonts.BODY,
+            bg=UIColors.BG_SECONDARY,
+            fg=UIColors.TEXT_PRIMARY,
+            wraplength=480,
+        ).pack(anchor="w", pady=(0, UISpacing.SM))
+
+        tk.Label(
+            msg_frame,
+            text=get_tesseract_install_instructions(),
+            font=UIFonts.SMALL,
+            bg=UIColors.BG_SECONDARY,
+            fg=UIColors.TEXT_SECONDARY,
+            justify="left",
+            wraplength=480,
+        ).pack(anchor="w", pady=(0, UISpacing.LG))
+
+        # Buttons
+        btn_frame = tk.Frame(dialog, bg=UIColors.BG_SECONDARY)
+        btn_frame.pack(fill="x", padx=UISpacing.LG, pady=(0, UISpacing.LG))
+
+        def run_install_and_close():
+            self._run_winget_install()
+            dialog.destroy()
+
+        def check_again():
+            self.tesseract_available, _ = check_tesseract_available()
+            if self.tesseract_available:
+                self._refresh_status_bar()
+                dialog.destroy()
+                messagebox.showinfo(
+                    "Tesseract Found",
+                    "Tesseract OCR was detected. You can now process PDFs.",
+                    parent=self.root,
+                )
+            else:
+                messagebox.showinfo(
+                    "Not Found Yet",
+                    "Tesseract still not found.\n\n"
+                    "If you just installed it, try closing and reopening this application.",
+                    parent=dialog,
+                )
+
+        if sys.platform == "win32":
+            install_btn = create_rounded_button(
+                btn_frame,
+                "Install with winget (auto)",
+                run_install_and_close,
+                style="primary",
+            )
+            install_btn.pack(side="left", padx=(0, UISpacing.SM))
+
+        check_btn = create_rounded_button(
+            btn_frame, "Check again", check_again, style="secondary"
+        )
+        check_btn.pack(side="left", padx=(0, UISpacing.SM))
+
+        ok_btn = create_rounded_button(btn_frame, "OK", dialog.destroy, style="secondary")
+        ok_btn.pack(side="left")
+
+        # Center dialog on screen
+        dialog.update_idletasks()
+        x = (dialog.winfo_screenwidth() - width) // 2
+        y = (dialog.winfo_screenheight() - height) // 2
+        dialog.geometry(f"+{x}+{y}")
+
     def clear_results(self):
         """Clear results text."""
         self.result_text.delete(1.0, tk.END)
@@ -927,8 +1250,10 @@ class PDFOCRTool:
         
         self.result_text.insert(tk.END, "📋 Features: ")
         features = []
-        if OCRMYPDF_AVAILABLE:
+        if OCRMYPDF_AVAILABLE and self.tesseract_available:
             features.append("✓ OCR Processing")
+        elif OCRMYPDF_AVAILABLE and not self.tesseract_available:
+            features.append("⚠ OCR (install Tesseract)")
         else:
             features.append("✗ OCR Processing")
         if PIL_AVAILABLE and IMG2PDF_AVAILABLE:
@@ -938,6 +1263,9 @@ class PDFOCRTool:
         self.result_text.insert(tk.END, " | ".join(features) + "\n")
         
         self.result_text.insert(tk.END, "📄 Supported: PDF, JPG, PNG, TIFF, BMP\n")
+        
+        if not self.tesseract_available and OCRMYPDF_AVAILABLE:
+            self.result_text.insert(tk.END, "\n⚠️ Tesseract OCR not found! Install it to use OCR. See status bar.\n")
         
         if HAS_DND:
             self.result_text.insert(tk.END, "💡 Drag and drop files to begin.\n")

@@ -131,6 +131,21 @@ The tool handles common scenarios:
 
 ## Troubleshooting
 
+### "Tesseract not found" or OCR skips all files
+
+**Tesseract OCR must be installed separately**—it is not bundled with the application.
+
+**Windows (recommended):**
+```batch
+winget install --id UB-Mannheim.TesseractOCR -e
+```
+
+**Alternative methods:**
+- Chocolatey: `choco install tesseract`
+- Manual: [Download from UB-Mannheim](https://github.com/UB-Mannheim/tesseract/wiki)
+
+Restart the OCR tool after installing Tesseract.
+
 ### "OCRmyPDF not available" Error
 
 Install the required dependency:
