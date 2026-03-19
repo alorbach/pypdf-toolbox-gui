@@ -67,6 +67,42 @@ except ImportError:
     IMG2PDF_AVAILABLE = False
     print("[WARNING] img2pdf not available. Install with: pip install img2pdf")
 
+# PyMuPDF – used to write invisible text overlay for AI OCR
+try:
+    import fitz  # PyMuPDF
+    PYMUPDF_AVAILABLE = True
+except ImportError:
+    fitz = None  # type: ignore
+    PYMUPDF_AVAILABLE = False
+    print("[WARNING] PyMuPDF (fitz) not available. Install with: pip install pymupdf")
+
+# HTTP requests – used for Azure Document Intelligence API calls
+try:
+    import requests as _requests_module
+    import time as _time_module
+    REQUESTS_AVAILABLE = True
+except ImportError:
+    _requests_module = None  # type: ignore
+    _time_module = None  # type: ignore
+    REQUESTS_AVAILABLE = False
+    print("[WARNING] requests not available. Install with: pip install requests")
+
+# Azure AI configuration
+try:
+    import sys as _sys_ref
+    import os as _os_ref
+    # Resolve src/utils relative to this file
+    _utils_path = str(_os_ref.path.join(_os_ref.path.dirname(_os_ref.path.abspath(__file__)), "utils"))
+    if _utils_path not in _sys_ref.path:
+        _sys_ref.path.insert(0, _os_ref.path.dirname(_os_ref.path.abspath(__file__)))
+    from utils.azure_config import AzureAIConfig, get_azure_config
+    AZURE_CONFIG_AVAILABLE = True
+except Exception as _azure_import_err:
+    AzureAIConfig = None  # type: ignore
+    get_azure_config = None  # type: ignore
+    AZURE_CONFIG_AVAILABLE = False
+    print(f"[WARNING] Azure config not available: {_azure_import_err}")
+
 
 # ============================================================================
 # Tesseract Availability Check
@@ -442,14 +478,18 @@ def process_directory_images(
     language: str = 'eng',
     output_callback=None,
     optimize_level: int = 0,
+    use_ai: bool = False,
+    azure_config=None,
 ) -> bool:
     """Process all images in a directory and convert them to a single PDF with OCR.
     
     Args:
         directory: Directory containing image files
-        language: OCR language code
+        language: OCR language code (used for local Tesseract OCR only)
         output_callback: Optional callback function(line) to receive output lines
         optimize_level: 0=no optimization, 1=lossless (requires Ghostscript)
+        use_ai: If True, use Azure Document Intelligence instead of local Tesseract
+        azure_config: AzureAIConfig instance for AI OCR (loaded automatically if None)
     
     Returns:
         True if successful, False otherwise
@@ -479,11 +519,271 @@ def process_directory_images(
         return False
     
     # Perform OCR on the combined PDF
-    if not process_pdf_with_ocr(
-        pdf_path, language, output_callback=output_callback, optimize_level=optimize_level
-    ):
-        return False
+    if use_ai:
+        if not process_pdf_with_ai_ocr(pdf_path, output_callback=output_callback, azure_config=azure_config):
+            return False
+    else:
+        if not process_pdf_with_ocr(
+            pdf_path, language, output_callback=output_callback, optimize_level=optimize_level
+        ):
+            return False
     
+    return True
+
+
+def combine_all_images_to_pdf(
+    image_files: List[str],
+    output_pdf: str,
+    output_callback=None,
+) -> bool:
+    """Combine a flat list of image files (any directories) into a single PDF.
+
+    Args:
+        image_files: List of image file paths to merge (will be sorted).
+        output_pdf: Destination PDF path.
+        output_callback: Optional callback(line) for progress messages.
+
+    Returns:
+        True if successful, False otherwise.
+    """
+    if not image_files:
+        return False
+
+    sorted_images = sorted(image_files)
+
+    if output_callback:
+        output_callback(f"Combining {len(sorted_images)} image(s) into: {os.path.basename(output_pdf)}")
+
+    if not convert_images_to_pdf(sorted_images, output_pdf):
+        if output_callback:
+            output_callback("Error: Failed to convert images to PDF.")
+        return False
+
+    if output_callback:
+        output_callback(f"✓ Combined PDF created: {os.path.basename(output_pdf)}")
+
+    return True
+
+
+def process_pdf_with_ai_ocr(
+    pdf_path: str,
+    output_callback=None,
+    azure_config=None,
+) -> bool:
+    """Process a PDF file with Azure Document Intelligence OCR.
+
+    Submits the PDF to Azure Document Intelligence (prebuilt-read model),
+    retrieves word-level bounding boxes from the response, and writes an
+    invisible text overlay onto the original PDF using PyMuPDF so the file
+    becomes searchable without visually altering it.
+
+    Args:
+        pdf_path: Path to the PDF file (modified in-place).
+        output_callback: Optional callback function(line) for progress output.
+        azure_config: AzureAIConfig instance; loaded automatically if None.
+
+    Returns:
+        True if successful, False otherwise.
+    """
+    if not PYMUPDF_AVAILABLE:
+        if output_callback:
+            output_callback("Error: PyMuPDF (fitz) is required for AI OCR. Install with: pip install pymupdf")
+        return False
+
+    if not REQUESTS_AVAILABLE:
+        if output_callback:
+            output_callback("Error: requests library is required for AI OCR. Install with: pip install requests")
+        return False
+
+    # Load config if not supplied
+    if azure_config is None:
+        if not AZURE_CONFIG_AVAILABLE:
+            if output_callback:
+                output_callback("Error: Azure configuration module not available.")
+            return False
+        try:
+            azure_config = get_azure_config()
+        except Exception as e:
+            if output_callback:
+                output_callback(f"Error loading Azure config: {e}")
+            return False
+
+    if not azure_config.is_doc_intel_configured():
+        if output_callback:
+            output_callback("Error: Azure Document Intelligence is not configured. Please set endpoint and API key.")
+        return False
+
+    import requests as req
+    import time
+
+    endpoint = azure_config.doc_intel_endpoint.rstrip('/')
+    api_key = azure_config.doc_intel_api_key
+    request_timeout = azure_config.timeout
+    polling_timeout = azure_config.polling_timeout
+
+    analyze_url = (
+        f"{endpoint}/formrecognizer/documentModels/prebuilt-read:analyze"
+        f"?api-version=2023-07-31"
+    )
+    headers = {
+        'Content-Type': 'application/pdf',
+        'Ocp-Apim-Subscription-Key': api_key,
+    }
+
+    if output_callback:
+        output_callback(f"Submitting to Azure Document Intelligence: {os.path.basename(pdf_path)}")
+
+    try:
+        with open(pdf_path, 'rb') as f:
+            response = req.post(analyze_url, headers=headers, data=f, timeout=request_timeout)
+        response.raise_for_status()
+    except Exception as e:
+        if output_callback:
+            output_callback(f"Error submitting PDF: {e}")
+        return False
+
+    operation_url = response.headers.get("Operation-Location")
+    if not operation_url:
+        if output_callback:
+            output_callback("Error: No Operation-Location header in Azure response.")
+        return False
+
+    # Poll for results
+    status_headers = {'Ocp-Apim-Subscription-Key': api_key}
+    start_time = time.time()
+    max_attempts = polling_timeout // 3
+    result_json = None
+
+    for attempt in range(int(max_attempts)):
+        elapsed = time.time() - start_time
+        if elapsed > polling_timeout:
+            if output_callback:
+                output_callback(f"Error: Azure AI processing timed out after {elapsed:.0f}s")
+            return False
+        try:
+            poll_resp = req.get(operation_url, headers=status_headers, timeout=30)
+            poll_resp.raise_for_status()
+            result_json = poll_resp.json()
+            status = result_json.get('status', '')
+
+            if attempt % 10 == 0 or status != 'running':
+                if output_callback:
+                    output_callback(f"  Azure status: {status} (elapsed: {elapsed:.0f}s)")
+
+            if status == 'succeeded':
+                break
+            elif status == 'failed':
+                error = result_json.get('error', {})
+                if output_callback:
+                    output_callback(f"Error: Azure AI processing failed: {error.get('message', 'Unknown')}")
+                return False
+        except req.exceptions.Timeout:
+            if output_callback:
+                output_callback(f"  Poll attempt {attempt + 1} timed out, retrying...")
+        except Exception as e:
+            if output_callback:
+                output_callback(f"  Poll attempt {attempt + 1} error: {e}, retrying...")
+            time.sleep(2)
+
+        time.sleep(3)
+    else:
+        if output_callback:
+            output_callback(f"Error: Azure AI processing timed out.")
+        return False
+
+    # --- Write invisible text overlay via PyMuPDF ---
+    analyze_result = result_json.get('analyzeResult', {})
+    di_pages = analyze_result.get('pages', [])
+
+    if not di_pages:
+        if output_callback:
+            output_callback("Warning: No pages returned by Azure AI.")
+        return True  # Nothing to write but not a hard failure
+
+    try:
+        doc = fitz.open(pdf_path)
+    except Exception as e:
+        if output_callback:
+            output_callback(f"Error opening PDF with PyMuPDF: {e}")
+        return False
+
+    words_written = 0
+
+    for page_idx, di_page in enumerate(di_pages):
+        if page_idx >= len(doc):
+            break
+
+        fitz_page = doc[page_idx]
+        fitz_rect = fitz_page.rect  # PDF points (width x height)
+
+        # Azure DI returns page dimensions in the unit specified (usually 'inch' or 'pixel')
+        # The polygon values are in the same unit as width/height.
+        di_width = di_page.get('width', 0)
+        di_height = di_page.get('height', 0)
+
+        if di_width <= 0 or di_height <= 0:
+            continue
+
+        # Scale factors from DI coordinates to PDF points
+        scale_x = fitz_rect.width / di_width
+        scale_y = fitz_rect.height / di_height
+
+        words = di_page.get('words', [])
+
+        for word in words:
+            content = word.get('content', '').strip()
+            if not content:
+                continue
+
+            polygon = word.get('polygon', [])
+            if len(polygon) < 8:
+                continue
+
+            # polygon: [x0,y0, x1,y1, x2,y2, x3,y3] (top-left clockwise)
+            xs = [polygon[i] * scale_x for i in range(0, 8, 2)]
+            ys = [polygon[i] * scale_y for i in range(1, 8, 2)]
+
+            x0, y0 = min(xs), min(ys)
+            x1, y1 = max(xs), max(ys)
+
+            word_height = y1 - y0
+            if word_height <= 0:
+                word_height = 10  # fallback
+
+            # Estimate a font size that roughly fits the bounding box
+            font_size = max(1, word_height * 0.85)
+
+            # Insert invisible text (render_mode 3 = invisible, searchable)
+            try:
+                fitz_page.insert_text(
+                    fitz.Point(x0, y1),   # baseline at bottom-left of bbox
+                    content,
+                    fontsize=font_size,
+                    render_mode=3,
+                    overlay=True,
+                )
+                words_written += 1
+            except Exception:
+                pass  # Skip words that can't be placed
+
+    if output_callback:
+        output_callback(f"  Wrote {words_written} words as invisible text overlay.")
+
+    try:
+        doc.save(pdf_path, incremental=False, deflate=True)
+        doc.close()
+    except Exception as e:
+        try:
+            doc.close()
+        except Exception:
+            pass
+        if output_callback:
+            output_callback(f"Error saving PDF: {e}")
+        return False
+
+    if output_callback:
+        output_callback(f"✓ AI OCR complete: {os.path.basename(pdf_path)}")
+
     return True
 
 
@@ -511,9 +811,19 @@ class PDFOCRTool:
         self.processing = False
         self.language = 'eng'
         
-        # Check Tesseract availability (required for OCR)
+        # Check Tesseract availability (required for local OCR)
         self.tesseract_available, _ = check_tesseract_available()
         self.ghostscript_available = check_ghostscript_available()
+
+        # Load Azure AI configuration (for AI OCR engine)
+        self.azure_config = None
+        self._azure_di_configured_flag = False
+        if AZURE_CONFIG_AVAILABLE:
+            try:
+                self.azure_config = get_azure_config()
+                self._azure_di_configured_flag = self.azure_config.is_doc_intel_configured()
+            except Exception as e:
+                print(f"[WARNING] Could not load Azure AI config: {e}")
 
         # Setup UI
         self.setup_ui()
@@ -650,19 +960,68 @@ class PDFOCRTool:
         )
         options_frame.grid(row=2, column=0, sticky="ew", pady=UISpacing.XS)
         options_frame.grid_columnconfigure(1, weight=1)
-        
-        # Language selection
+
+        # ── Row 0: OCR Engine ─────────────────────────────────────────────
         tk.Label(
+            options_frame,
+            text="OCR Engine:",
+            font=UIFonts.BODY_BOLD,
+            bg=UIColors.BG_PRIMARY,
+            fg=UIColors.TEXT_PRIMARY
+        ).grid(row=0, column=0, padx=UISpacing.SM, pady=UISpacing.SM, sticky="w")
+
+        self.ocr_engine_var = tk.StringVar(value="local")
+        engine_frame = tk.Frame(options_frame, bg=UIColors.BG_PRIMARY)
+        engine_frame.grid(row=0, column=1, padx=UISpacing.SM, pady=UISpacing.SM, sticky="w")
+
+        tk.Radiobutton(
+            engine_frame,
+            text="Local (Tesseract)",
+            variable=self.ocr_engine_var,
+            value="local",
+            font=UIFonts.BODY,
+            bg=UIColors.BG_PRIMARY,
+            fg=UIColors.TEXT_PRIMARY,
+            command=self._on_engine_change,
+        ).pack(side=tk.LEFT, padx=(0, UISpacing.MD))
+
+        tk.Radiobutton(
+            engine_frame,
+            text="AI (Azure Document Intelligence)",
+            variable=self.ocr_engine_var,
+            value="azure",
+            font=UIFonts.BODY,
+            bg=UIColors.BG_PRIMARY,
+            fg=UIColors.TEXT_PRIMARY,
+            command=self._on_engine_change,
+        ).pack(side=tk.LEFT, padx=(0, UISpacing.SM))
+
+        # Azure DI config status label (shown next to AI radio)
+        di_status_text, di_status_color = self._azure_di_status_text()
+        self.azure_di_status_label = tk.Label(
+            engine_frame,
+            text=di_status_text,
+            font=UIFonts.SMALL_BOLD,
+            bg=UIColors.BG_PRIMARY,
+            fg=di_status_color,
+            cursor="hand2",
+        )
+        self.azure_di_status_label.pack(side=tk.LEFT)
+        self.azure_di_status_label.bind("<Button-1>", lambda e: self._on_azure_configure_click())
+
+        # ── Row 1: Language (local OCR only) ─────────────────────────────
+        self.language_label = tk.Label(
             options_frame,
             text="OCR Language:",
             font=UIFonts.BODY_BOLD,
             bg=UIColors.BG_PRIMARY,
             fg=UIColors.TEXT_PRIMARY
-        ).grid(row=0, column=0, padx=UISpacing.SM, pady=UISpacing.SM, sticky="w")
+        )
+        self.language_label.grid(row=1, column=0, padx=UISpacing.SM, pady=UISpacing.SM, sticky="w")
         
         self.language_var = tk.StringVar(value="eng")
-        language_frame = tk.Frame(options_frame, bg=UIColors.BG_PRIMARY)
-        language_frame.grid(row=0, column=1, padx=UISpacing.SM, pady=UISpacing.SM, sticky="w")
+        self.language_frame = tk.Frame(options_frame, bg=UIColors.BG_PRIMARY)
+        self.language_frame.grid(row=1, column=1, padx=UISpacing.SM, pady=UISpacing.SM, sticky="w")
         
         languages = [
             ("English", "eng"),
@@ -672,22 +1031,96 @@ class PDFOCRTool:
             ("Spanish", "spa"),
         ]
         
+        self._language_radiobuttons = []
         for text, value in languages:
             rb = tk.Radiobutton(
-                language_frame,
+                self.language_frame,
                 text=text,
                 variable=self.language_var,
                 value=value,
                 font=UIFonts.BODY,
                 bg=UIColors.BG_PRIMARY,
-                fg=UIColors.TEXT_PRIMARY
+                fg=UIColors.TEXT_PRIMARY,
             )
             rb.pack(side=tk.LEFT, padx=(0, UISpacing.MD))
+            self._language_radiobuttons.append(rb)
 
-        # Optional: Ghostscript (image optimization)
+        # Note shown when AI OCR selected (language auto-detected)
+        self.ai_language_note = tk.Label(
+            self.language_frame,
+            text="(Azure AI auto-detects language)",
+            font=UIFonts.SMALL,
+            bg=UIColors.BG_PRIMARY,
+            fg=UIColors.TEXT_MUTED,
+        )
+
+        # ── Row 2: Ghostscript (local OCR only) ──────────────────────────
         self.gs_row = tk.Frame(options_frame, bg=UIColors.BG_PRIMARY)
-        self.gs_row.grid(row=1, column=0, columnspan=2, padx=UISpacing.SM, pady=(0, UISpacing.SM), sticky="w")
+        self.gs_row.grid(row=2, column=0, columnspan=2, padx=UISpacing.SM, pady=(0, UISpacing.SM), sticky="w")
         self._build_gs_row()
+
+        # ── Row 3: Combine images into single PDF ─────────────────────────
+        self.single_pdf_var = tk.BooleanVar(value=False)
+        single_pdf_frame = tk.Frame(options_frame, bg=UIColors.BG_PRIMARY)
+        single_pdf_frame.grid(row=3, column=0, columnspan=2, padx=UISpacing.SM, pady=(0, UISpacing.SM), sticky="w")
+
+        tk.Checkbutton(
+            single_pdf_frame,
+            text="Combine selected images into a single PDF (asks for output path)",
+            variable=self.single_pdf_var,
+            font=UIFonts.BODY,
+            bg=UIColors.BG_PRIMARY,
+            fg=UIColors.TEXT_PRIMARY,
+            activebackground=UIColors.BG_PRIMARY,
+        ).pack(side=tk.LEFT)
+
+    def _azure_di_status_text(self):
+        """Return (label_text, color) for Azure DI status."""
+        if not AZURE_CONFIG_AVAILABLE:
+            return "✗ Azure config not available", UIColors.ERROR
+        if self._azure_di_configured_flag:
+            return "✓ Configured", UIColors.SUCCESS
+        return "✗ Not configured — click to configure", UIColors.ERROR
+
+    def _on_engine_change(self):
+        """Update UI visibility when OCR engine selection changes."""
+        using_ai = self.ocr_engine_var.get() == "azure"
+
+        # Grey out language controls when AI selected
+        state = "disabled" if using_ai else "normal"
+        for rb in self._language_radiobuttons:
+            rb.config(state=state)
+
+        if using_ai:
+            # Hide language radio buttons, show note
+            for rb in self._language_radiobuttons:
+                rb.pack_forget()
+            self.ai_language_note.pack(side=tk.LEFT)
+        else:
+            self.ai_language_note.pack_forget()
+            for rb in self._language_radiobuttons:
+                rb.pack(side=tk.LEFT, padx=(0, UISpacing.MD))
+
+        # Show/hide GS row (only relevant for local OCR)
+        if using_ai:
+            self.gs_row.grid_remove()
+        else:
+            self.gs_row.grid()
+
+    def _on_azure_configure_click(self):
+        """Prompt the user to configure Azure Document Intelligence."""
+        messagebox.showinfo(
+            "Configure Azure AI",
+            "Please configure Azure Document Intelligence in the launcher:\n\n"
+            "1. Open the main launcher window\n"
+            "2. Click the '⚙️ Azure' button\n"
+            "3. Enter your Azure Document Intelligence endpoint and API key\n"
+            "4. Click Save, then restart this tool.\n\n"
+            "Alternatively, set environment variables:\n"
+            "  AZURE_DOC_INTEL_ENDPOINT\n"
+            "  AZURE_DOC_INTEL_API_KEY",
+            parent=self.root,
+        )
 
     def _build_gs_row(self):
         """Build or rebuild the Ghostscript options row."""
@@ -821,7 +1254,9 @@ class PDFOCRTool:
             ("OCRmyPDF", lambda: OCRMYPDF_AVAILABLE),
             ("Pillow", lambda: PIL_AVAILABLE),
             ("img2pdf", lambda: IMG2PDF_AVAILABLE),
-            ("Drag&Drop", lambda: HAS_DND)
+            ("PyMuPDF", lambda: PYMUPDF_AVAILABLE),
+            ("Azure DI", lambda: self._azure_di_configured_flag),
+            ("Drag&Drop", lambda: HAS_DND),
         ]
         status_parts = []
         for name, get_available in self._status_items:
@@ -949,23 +1384,50 @@ class PDFOCRTool:
         if self.processing:
             messagebox.showwarning("Processing", "Already processing files. Please wait.")
             return
-        
-        if not OCRMYPDF_AVAILABLE:
-            messagebox.showerror(
-                "Missing Dependency",
-                "OCRmyPDF is not available.\n\n"
-                "The tool will attempt to install it automatically on next launch.\n\n"
-                "Alternatively, install manually with:\n"
-                "  pip install ocrmypdf\n\n"
-                "Note: OCRmyPDF requires Tesseract OCR to be installed on your system."
-            )
-            return
-        
-        if not self.tesseract_available:
-            self._show_tesseract_install_dialog()
-            return
-        
-        # Check for image files
+
+        ocr_engine = self.ocr_engine_var.get()  # "local" or "azure"
+        use_ai = ocr_engine == "azure"
+
+        # ── Preflight checks ──────────────────────────────────────────────
+        if use_ai:
+            # AI engine: validate Azure DI configuration
+            if not PYMUPDF_AVAILABLE:
+                messagebox.showerror(
+                    "Missing Dependency",
+                    "AI OCR requires PyMuPDF.\n\nInstall with:\n  pip install pymupdf"
+                )
+                return
+            if not REQUESTS_AVAILABLE:
+                messagebox.showerror(
+                    "Missing Dependency",
+                    "AI OCR requires the requests library.\n\nInstall with:\n  pip install requests"
+                )
+                return
+            if not self._azure_di_configured_flag:
+                messagebox.showerror(
+                    "Azure Not Configured",
+                    "Azure Document Intelligence is not configured.\n\n"
+                    "Please configure it in the launcher (⚙️ Azure button) and restart this tool.",
+                    parent=self.root,
+                )
+                return
+        else:
+            # Local engine: validate OCRmyPDF + Tesseract
+            if not OCRMYPDF_AVAILABLE:
+                messagebox.showerror(
+                    "Missing Dependency",
+                    "OCRmyPDF is not available.\n\n"
+                    "The tool will attempt to install it automatically on next launch.\n\n"
+                    "Alternatively, install manually with:\n"
+                    "  pip install ocrmypdf\n\n"
+                    "Note: OCRmyPDF requires Tesseract OCR to be installed on your system."
+                )
+                return
+            if not self.tesseract_available:
+                self._show_tesseract_install_dialog()
+                return
+
+        # ── Image-dependency check ────────────────────────────────────────
         has_images = any(f.lower().endswith(('.jpg', '.jpeg', '.png', '.tiff', '.bmp')) for f in files)
         if has_images and (not PIL_AVAILABLE or not IMG2PDF_AVAILABLE):
             missing = []
@@ -973,7 +1435,6 @@ class PDFOCRTool:
                 missing.append("pillow")
             if not IMG2PDF_AVAILABLE:
                 missing.append("img2pdf")
-            
             messagebox.showerror(
                 "Missing Dependencies",
                 f"Image processing requires: {', '.join(missing)}\n\n"
@@ -982,125 +1443,177 @@ class PDFOCRTool:
                 f"  pip install {' '.join(missing)}"
             )
             return
-        
+
         self.processing = True
         self.language = self.language_var.get()
-        
+
         # Set wait cursor
         self.root.config(cursor="wait")
         self.root.update()
-        
+
         try:
+            engine_label = "Azure Document Intelligence" if use_ai else f"Local Tesseract ({self.language})"
             self.result_text.insert(tk.END, f"\n{'='*60}\n")
             self.result_text.insert(tk.END, f"Processing {len(files)} file(s)\n")
-            self.result_text.insert(tk.END, f"Language: {self.language}\n")
+            self.result_text.insert(tk.END, f"Engine: {engine_label}\n")
             self.result_text.insert(tk.END, f"{'='*60}\n\n")
             self.result_text.see(tk.END)
             self.root.update()
-            
+
             # Separate PDFs and images
             pdf_files = [f for f in files if f.lower().endswith('.pdf')]
             image_files = [f for f in files if f.lower().endswith(('.jpg', '.jpeg', '.png', '.tiff', '.bmp'))]
-            
+
             processed_count = 0
             skipped_count = 0
             error_count = 0
-            
-            # Process PDFs
+
+            # ── Helper: per-file log callback ─────────────────────────────
+            def make_log_callback():
+                def log_output(line):
+                    self.result_text.insert(tk.END, f"  {line}\n")
+                    self.result_text.see(tk.END)
+                    self.root.update()
+                return log_output
+
+            # ── Process PDFs ──────────────────────────────────────────────
             for i, pdf_file in enumerate(pdf_files, 1):
-                self.result_text.insert(tk.END, f"[{i}/{len(pdf_files)}] Processing PDF: {os.path.basename(pdf_file)}\n")
+                self.result_text.insert(
+                    tk.END, f"[{i}/{len(pdf_files)}] Processing PDF: {os.path.basename(pdf_file)}\n"
+                )
                 self.result_text.see(tk.END)
                 self.root.update()
-                
+
                 try:
-                    # Define callback to display ocrmypdf output in Processing Log
-                    def log_output(line):
-                        """Callback to display ocrmypdf output in the Processing Log"""
-                        self.result_text.insert(tk.END, f"  {line}\n")
-                        self.result_text.see(tk.END)
-                        self.root.update()
-                    
-                    optimize_lvl = 1 if self.ghostscript_available else 0
-                    if process_pdf_with_ocr(
-                        pdf_file, self.language, output_callback=log_output, optimize_level=optimize_lvl
-                    ):
-                        self.result_text.insert(tk.END, f"  ✓ Successfully processed\n")
+                    log_cb = make_log_callback()
+                    if use_ai:
+                        success = process_pdf_with_ai_ocr(
+                            pdf_file,
+                            output_callback=log_cb,
+                            azure_config=self.azure_config,
+                        )
+                    else:
+                        optimize_lvl = 1 if self.ghostscript_available else 0
+                        success = process_pdf_with_ocr(
+                            pdf_file, self.language, output_callback=log_cb, optimize_level=optimize_lvl
+                        )
+
+                    if success:
+                        self.result_text.insert(tk.END, "  ✓ Successfully processed\n")
                         processed_count += 1
                     else:
-                        self.result_text.insert(tk.END, f"  ⏭ Skipped (may already have OCR text)\n")
+                        self.result_text.insert(tk.END, "  ⏭ Skipped (may already have OCR text)\n")
                         skipped_count += 1
                 except Exception as e:
                     self.result_text.insert(tk.END, f"  ✗ Error: {str(e)}\n")
                     error_count += 1
-                
+
                 self.result_text.see(tk.END)
                 self.root.update()
-            
-            # Process images (group by directory)
+
+            # ── Process images ────────────────────────────────────────────
             if image_files:
-                # Group images by directory
-                image_groups = {}
-                for img in image_files:
-                    img_dir = os.path.dirname(img)
-                    if img_dir not in image_groups:
-                        image_groups[img_dir] = []
-                    image_groups[img_dir].append(img)
-                
-                for img_dir, imgs in image_groups.items():
-                    self.result_text.insert(tk.END, f"\nProcessing {len(imgs)} image(s) from: {os.path.basename(img_dir)}\n")
-                    self.result_text.see(tk.END)
-                    self.root.update()
-                    
-                    try:
-                        # Create temporary directory for images
-                        temp_dir = os.path.join(img_dir, "temp_ocr")
-                        os.makedirs(temp_dir, exist_ok=True)
-                        
-                        # Copy images to temp directory
-                        for img in imgs:
-                            shutil.copy2(img, temp_dir)
-                        
-                        # Define callback to display ocrmypdf output in Processing Log
-                        def log_output(line):
-                            """Callback to display ocrmypdf output in the Processing Log"""
-                            self.result_text.insert(tk.END, f"  {line}\n")
-                            self.result_text.see(tk.END)
-                            self.root.update()
-                        
-                        # Process the temporary directory
-                        optimize_lvl = 1 if self.ghostscript_available else 0
-                        if process_directory_images(
-                            temp_dir, self.language, output_callback=log_output, optimize_level=optimize_lvl
-                        ):
-                            # Find the created PDF
-                            pdf_files_in_dir = glob.glob(os.path.join(temp_dir, '*.pdf'))
-                            if pdf_files_in_dir:
-                                created_pdf = pdf_files_in_dir[0]
-                                # Move PDF to original directory
-                                final_pdf = os.path.join(img_dir, os.path.basename(created_pdf))
-                                if os.path.exists(final_pdf):
-                                    os.remove(final_pdf)
-                                shutil.move(created_pdf, final_pdf)
-                                self.result_text.insert(tk.END, f"  ✓ Created PDF: {os.path.basename(final_pdf)}\n")
-                                processed_count += 1
-                        
-                        # Clean up temp directory
-                        shutil.rmtree(temp_dir, ignore_errors=True)
-                    except Exception as e:
-                        self.result_text.insert(tk.END, f"  ✗ Error: {str(e)}\n")
-                        error_count += 1
-                        # Clean up temp directory on error
+                combine_single = self.single_pdf_var.get()
+
+                if combine_single:
+                    # Auto-save combined PDF in the folder of the first image
+                    first_img = sorted(image_files)[0]
+                    default_name = os.path.splitext(os.path.basename(first_img))[0] + "_combined.pdf"
+                    output_pdf = os.path.join(os.path.dirname(first_img), default_name)
+                    if not output_pdf:
+                        self.result_text.insert(tk.END, "\nImage processing cancelled.\n")
+                        self.result_text.see(tk.END)
+                    else:
+                        self.result_text.insert(
+                            tk.END, f"\nCombining {len(image_files)} image(s) into single PDF…\n"
+                        )
+                        self.result_text.insert(tk.END, f"  Output: {output_pdf}\n")
+                        self.result_text.see(tk.END)
+                        self.root.update()
+
+                        log_cb = make_log_callback()
                         try:
-                            shutil.rmtree(temp_dir, ignore_errors=True)
-                        except:
-                            pass
-                    
-                    self.result_text.see(tk.END)
-                    self.root.update()
-            
-            # Summary
+                            if combine_all_images_to_pdf(image_files, output_pdf, output_callback=log_cb):
+                                # Now OCR the combined PDF
+                                self.result_text.insert(tk.END, "  Running OCR on combined PDF…\n")
+                                self.result_text.see(tk.END)
+                                self.root.update()
+                                if use_ai:
+                                    ocr_ok = process_pdf_with_ai_ocr(
+                                        output_pdf, output_callback=log_cb, azure_config=self.azure_config
+                                    )
+                                else:
+                                    optimize_lvl = 1 if self.ghostscript_available else 0
+                                    ocr_ok = process_pdf_with_ocr(
+                                        output_pdf, self.language, output_callback=log_cb,
+                                        optimize_level=optimize_lvl
+                                    )
+                                if ocr_ok:
+                                    self.result_text.insert(
+                                        tk.END, f"  ✓ Combined searchable PDF: {os.path.basename(output_pdf)}\n"
+                                    )
+                                    processed_count += 1
+                                else:
+                                    self.result_text.insert(tk.END, "  ⏭ OCR skipped (already has text?)\n")
+                                    skipped_count += 1
+                            else:
+                                self.result_text.insert(tk.END, "  ✗ Failed to combine images.\n")
+                                error_count += 1
+                        except Exception as e:
+                            self.result_text.insert(tk.END, f"  ✗ Error: {str(e)}\n")
+                            error_count += 1
+
+                        self.result_text.see(tk.END)
+                        self.root.update()
+                else:
+                    # Per-image processing: each image → its own PDF with the same basename
+                    for i, img in enumerate(image_files, 1):
+                        img_dir = os.path.dirname(img)
+                        basename = os.path.splitext(os.path.basename(img))[0]
+                        output_pdf = os.path.join(img_dir, f"{basename}.pdf")
+
+                        self.result_text.insert(
+                            tk.END, f"\n[{i}/{len(image_files)}] Converting: {os.path.basename(img)} → {basename}.pdf\n"
+                        )
+                        self.result_text.see(tk.END)
+                        self.root.update()
+
+                        log_cb = make_log_callback()
+                        try:
+                            # Convert single image to PDF
+                            if not convert_images_to_pdf([img], output_pdf):
+                                self.result_text.insert(tk.END, "  ✗ Failed to convert image to PDF.\n")
+                                error_count += 1
+                                continue
+
+                            # Run OCR on the resulting PDF
+                            if use_ai:
+                                ocr_ok = process_pdf_with_ai_ocr(
+                                    output_pdf, output_callback=log_cb, azure_config=self.azure_config
+                                )
+                            else:
+                                optimize_lvl = 1 if self.ghostscript_available else 0
+                                ocr_ok = process_pdf_with_ocr(
+                                    output_pdf, self.language, output_callback=log_cb,
+                                    optimize_level=optimize_lvl
+                                )
+
+                            if ocr_ok:
+                                self.result_text.insert(tk.END, f"  ✓ Saved: {output_pdf}\n")
+                                processed_count += 1
+                            else:
+                                self.result_text.insert(tk.END, "  ⏭ OCR skipped (already has text?).\n")
+                                skipped_count += 1
+                        except Exception as e:
+                            self.result_text.insert(tk.END, f"  ✗ Error: {str(e)}\n")
+                            error_count += 1
+
+                        self.result_text.see(tk.END)
+                        self.root.update()
+
+            # ── Summary ───────────────────────────────────────────────────
             self.result_text.insert(tk.END, f"\n{'='*60}\n")
-            self.result_text.insert(tk.END, f"SUMMARY\n")
+            self.result_text.insert(tk.END, "SUMMARY\n")
             self.result_text.insert(tk.END, f"{'='*60}\n")
             self.result_text.insert(tk.END, f"Total: {len(files)} | ")
             self.result_text.insert(tk.END, f"✓ Success: {processed_count} | ")
@@ -1108,8 +1621,7 @@ class PDFOCRTool:
             self.result_text.insert(tk.END, f"✗ Failed: {error_count}\n")
             self.result_text.insert(tk.END, f"{'='*60}\n\n")
             self.result_text.see(tk.END)
-            
-            # Show summary dialog
+
             if error_count == 0:
                 messagebox.showinfo(
                     "Complete",
@@ -1251,11 +1763,17 @@ class PDFOCRTool:
         self.result_text.insert(tk.END, "📋 Features: ")
         features = []
         if OCRMYPDF_AVAILABLE and self.tesseract_available:
-            features.append("✓ OCR Processing")
+            features.append("✓ Local OCR (Tesseract)")
         elif OCRMYPDF_AVAILABLE and not self.tesseract_available:
-            features.append("⚠ OCR (install Tesseract)")
+            features.append("⚠ Local OCR (install Tesseract)")
         else:
-            features.append("✗ OCR Processing")
+            features.append("✗ Local OCR")
+        if self._azure_di_configured_flag and PYMUPDF_AVAILABLE:
+            features.append("✓ AI OCR (Azure DI)")
+        elif PYMUPDF_AVAILABLE:
+            features.append("⚠ AI OCR (configure Azure DI)")
+        else:
+            features.append("✗ AI OCR")
         if PIL_AVAILABLE and IMG2PDF_AVAILABLE:
             features.append("✓ Image to PDF")
         else:
@@ -1265,7 +1783,9 @@ class PDFOCRTool:
         self.result_text.insert(tk.END, "📄 Supported: PDF, JPG, PNG, TIFF, BMP\n")
         
         if not self.tesseract_available and OCRMYPDF_AVAILABLE:
-            self.result_text.insert(tk.END, "\n⚠️ Tesseract OCR not found! Install it to use OCR. See status bar.\n")
+            self.result_text.insert(tk.END, "\n⚠️ Tesseract OCR not found! Install it to use local OCR. See status bar.\n")
+        if not self._azure_di_configured_flag:
+            self.result_text.insert(tk.END, "💡 Azure AI OCR: configure via launcher ⚙️ Azure button, then restart.\n")
         
         if HAS_DND:
             self.result_text.insert(tk.END, "💡 Drag and drop files to begin.\n")
