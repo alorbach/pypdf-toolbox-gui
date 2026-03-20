@@ -243,6 +243,7 @@ class PDFCombinerApp:
         self.all_pages = []  # List of page data dictionaries
         self.selected_pages = []  # List of selected page data in order
         self.pages_by_file = []  # List of lists: pages grouped by file for auto-selection
+        self.page_rotations = {}  # Dict: (file_path, page_index) -> rotation degrees (CW)
         
         # Preview size configuration
         self.preview_sizes = {
@@ -629,6 +630,7 @@ class PDFCombinerApp:
         self.all_pages = []
         self.selected_pages = []
         self.pages_by_file = []
+        self.page_rotations = {}
         
         # Clear previous thumbnails
         for widget in self.scrollable_frame.winfo_children():
@@ -742,6 +744,11 @@ class PDFCombinerApp:
                         # Resize to configurable thumbnail size maintaining aspect ratio
                         pil_image.thumbnail(target_size, Image.Resampling.LANCZOS)
                         
+                        # Apply any existing rotation for this page (persists across size changes)
+                        rotation = self.page_rotations.get((file_path, page_index), 0)
+                        if rotation:
+                            pil_image = pil_image.rotate(-rotation, expand=True)
+                        
                         # Convert to PhotoImage for tkinter
                         photo = ImageTk.PhotoImage(pil_image)
                         
@@ -752,6 +759,7 @@ class PDFCombinerApp:
                             'file_path': file_path,
                             'photo': photo,
                             'pil_image': pil_image,
+                            'rotation': rotation,
                             'selected': False
                         }
                         
@@ -791,6 +799,53 @@ class PDFCombinerApp:
                         )
                         page_info.pack()
                         
+                        # Rotation buttons row
+                        rot_frame = tk.Frame(thumb_frame, bg=UIColors.THUMBNAIL_BG)
+                        rot_frame.pack(pady=(UISpacing.XS, 0))
+                        
+                        rot_ccw_btn = tk.Button(
+                            rot_frame,
+                            text="↺",
+                            command=lambda pd=page_data: self.rotate_page_ccw(pd),
+                            font=UIFonts.BUTTON_SMALL,
+                            bg=UIColors.BG_TERTIARY,
+                            fg=UIColors.TEXT_PRIMARY,
+                            activebackground=UIColors.BORDER_DARK,
+                            activeforeground=UIColors.TEXT_PRIMARY,
+                            relief="flat",
+                            cursor="hand2",
+                            bd=0,
+                            padx=4,
+                            pady=1
+                        )
+                        rot_ccw_btn.pack(side=tk.LEFT, padx=(0, UISpacing.XS))
+                        
+                        rot_cw_btn = tk.Button(
+                            rot_frame,
+                            text="↻",
+                            command=lambda pd=page_data: self.rotate_page_cw(pd),
+                            font=UIFonts.BUTTON_SMALL,
+                            bg=UIColors.BG_TERTIARY,
+                            fg=UIColors.TEXT_PRIMARY,
+                            activebackground=UIColors.BORDER_DARK,
+                            activeforeground=UIColors.TEXT_PRIMARY,
+                            relief="flat",
+                            cursor="hand2",
+                            bd=0,
+                            padx=4,
+                            pady=1
+                        )
+                        rot_cw_btn.pack(side=tk.LEFT)
+                        
+                        rot_label = tk.Label(
+                            rot_frame,
+                            text=f"{rotation}°" if rotation else "",
+                            font=UIFonts.SMALL,
+                            bg=UIColors.THUMBNAIL_BG,
+                            fg=UIColors.TEXT_MUTED
+                        )
+                        rot_label.pack(side=tk.LEFT, padx=(UISpacing.XS, 0))
+                        
                         # Selection number label (initially hidden)
                         selection_label = tk.Label(
                             thumb_frame,
@@ -803,7 +858,9 @@ class PDFCombinerApp:
                         )
                         
                         page_data['thumb_frame'] = thumb_frame
+                        page_data['thumb_btn'] = thumb_btn
                         page_data['selection_label'] = selection_label
+                        page_data['rot_label'] = rot_label
                         
                         self.all_pages.append(page_data)
                         file_pages.append(page_data)
@@ -952,6 +1009,9 @@ class PDFCombinerApp:
                 # Open the PDF file and get the specific page
                 pdf_reader = PdfReader(page_data['file_path'])
                 page = pdf_reader.pages[page_data['page_index']]
+                rotation = page_data.get('rotation', 0)
+                if rotation:
+                    page.rotate(rotation)
                 pdf_writer.add_page(page)
             
             # Save the combined PDF
@@ -1055,6 +1115,39 @@ class PDFCombinerApp:
         # Update display
         self.update_selection_display()
         self.save_btn.config(state=tk.NORMAL if self.selected_pages else tk.DISABLED)
+    
+    def rotate_page_cw(self, page_data):
+        """Rotate page 90 degrees clockwise."""
+        self._rotate_page(page_data, 90)
+    
+    def rotate_page_ccw(self, page_data):
+        """Rotate page 90 degrees counter-clockwise."""
+        self._rotate_page(page_data, -90)
+    
+    def _rotate_page(self, page_data, delta):
+        """Rotate a page by delta degrees (positive = clockwise) and update thumbnail."""
+        current = page_data.get('rotation', 0)
+        new_rotation = (current + delta) % 360
+        page_data['rotation'] = new_rotation
+        
+        # Persist rotation so it survives thumbnail size changes
+        key = (page_data['file_path'], page_data['page_index'])
+        self.page_rotations[key] = new_rotation
+        
+        # Rotate the stored PIL image (PIL uses CCW, so negate delta for CW rotation)
+        rotated_img = page_data['pil_image'].rotate(-delta, expand=True)
+        page_data['pil_image'] = rotated_img
+        
+        # Create new PhotoImage and update the thumbnail button
+        new_photo = ImageTk.PhotoImage(rotated_img)
+        page_data['photo'] = new_photo
+        page_data['thumb_btn'].config(image=new_photo)
+        page_data['thumb_btn'].image = new_photo  # Prevent garbage collection
+        
+        # Update rotation indicator label
+        rot_label = page_data.get('rot_label')
+        if rot_label:
+            rot_label.config(text=f"{new_rotation}°" if new_rotation else "")
     
     def _create_tooltip(self, widget, text):
         """Create a tooltip for a widget."""
