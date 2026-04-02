@@ -21,6 +21,23 @@ limitations under the License.
 import os
 from pathlib import Path
 
+def _azure_ui_msg(key: str, default_en: str, **kwargs) -> str:
+    """Localized string for console/log output; English if i18n unavailable."""
+    try:
+        try:
+            from utils.i18n import t
+        except ImportError:
+            from src.utils.i18n import t
+
+        return t(key, default=default_en, **kwargs)
+    except ImportError:
+        pass
+    try:
+        return default_en.format(**kwargs) if kwargs else default_en
+    except (KeyError, ValueError):
+        return default_en
+
+
 # YAML support (optional)
 try:
     import yaml
@@ -79,11 +96,31 @@ class AzureAIConfig:
                     file_config = yaml.safe_load(f)
                     if file_config:
                         self._merge_config(config, file_config)
-                print(f"[INFO] Loaded Azure AI config from {config_path}")
+                print(
+                    "[INFO] "
+                    + _azure_ui_msg(
+                        "azure.log.loaded_from",
+                        "Loaded Azure AI config from {path}",
+                        path=config_path,
+                    )
+                )
             except Exception as e:
-                print(f"[WARNING] Could not load Azure AI config file: {e}")
+                print(
+                    "[WARNING] "
+                    + _azure_ui_msg(
+                        "azure.log.load_failed",
+                        "Could not load Azure AI config file: {error}",
+                        error=e,
+                    )
+                )
         elif config_path.exists() and not YAML_AVAILABLE:
-            print("[WARNING] PyYAML not installed. Cannot load config file. Install with: pip install pyyaml")
+            print(
+                "[WARNING] "
+                + _azure_ui_msg(
+                    "azure.log.no_pyyaml_load",
+                    "PyYAML not installed. Cannot load config file. Install with: pip install pyyaml",
+                )
+            )
         
         # Override with environment variables if preferred
         if config['settings'].get('prefer_env_vars', True):
@@ -132,7 +169,13 @@ class AzureAIConfig:
                           Default False for security, but can be set to True if user explicitly wants to save keys.
         """
         if not YAML_AVAILABLE:
-            print("[ERROR] PyYAML not installed. Cannot save config file.")
+            print(
+                "[ERROR] "
+                + _azure_ui_msg(
+                    "azure.log.no_pyyaml_save",
+                    "PyYAML not installed. Cannot save config file.",
+                )
+            )
             return False
         
         config_path = self.root_dir / self.CONFIG_FILE
@@ -163,17 +206,50 @@ class AzureAIConfig:
                 yaml.safe_dump(save_config, f, default_flow_style=False, indent=2)
             
             if save_api_keys:
-                print(f"[INFO] Saved Azure AI config (including API keys) to {config_path}")
-                print("[WARNING] API keys are stored in plain text. Keep this file secure!")
+                print(
+                    "[INFO] "
+                    + _azure_ui_msg(
+                        "azure.log.saved_with_keys",
+                        "Saved Azure AI config (including API keys) to {path}",
+                        path=config_path,
+                    )
+                )
+                print(
+                    "[WARNING] "
+                    + _azure_ui_msg(
+                        "azure.log.keys_plaintext_warning",
+                        "API keys are stored in plain text. Keep this file secure!",
+                    )
+                )
             else:
-                print(f"[INFO] Saved Azure AI config (endpoints only) to {config_path}")
+                print(
+                    "[INFO] "
+                    + _azure_ui_msg(
+                        "azure.log.saved_endpoints_only",
+                        "Saved Azure AI config (endpoints only) to {path}",
+                        path=config_path,
+                    )
+                )
                 if openai_key_from_env or doc_intel_key_from_env:
-                    print("[INFO] API keys from environment variables were not saved (as expected)")
+                    print(
+                        "[INFO] "
+                        + _azure_ui_msg(
+                            "azure.log.env_keys_not_saved",
+                            "API keys from environment variables were not saved (as expected)",
+                        )
+                    )
             
             return True
             
         except Exception as e:
-            print(f"[ERROR] Failed to save Azure AI config: {e}")
+            print(
+                "[ERROR] "
+                + _azure_ui_msg(
+                    "azure.log.save_failed",
+                    "Failed to save Azure AI config: {error}",
+                    error=e,
+                )
+            )
             return False
     
     # Properties for easy access
@@ -245,31 +321,68 @@ class AzureAIConfig:
         """Check if Azure Document Intelligence is properly configured."""
         return bool(self.doc_intel_endpoint and self.doc_intel_api_key)
     
-    def get_status_text(self):
-        """Get a human-readable status of the configuration."""
-        lines = []
-        
+    def get_status_text(self, translate=None):
+        """Human-readable configuration status (localized when i18n is active).
+
+        If ``translate`` is set, it is used as ``callable(key, **kwargs) -> str`` (e.g. ``t``).
+        If omitted, the same locale keys are resolved via ``utils.i18n`` when available,
+        otherwise English defaults are used.
+        """
+
+        def line(key: str, default_en: str, **kwargs) -> str:
+            if translate is not None:
+                return translate(key, **kwargs)
+            return _azure_ui_msg(key, default_en, **kwargs)
+
+        lines: list[str] = []
+
         if self.is_openai_configured():
-            lines.append(f"✓ Azure OpenAI: Configured ({self.openai_endpoint})")
+            lines.append(
+                line(
+                    "azure.status.openai_ok",
+                    "✓ Azure OpenAI: Configured ({endpoint})",
+                    endpoint=self.openai_endpoint,
+                )
+            )
         else:
-            missing = []
+            miss_parts = []
             if not self.openai_endpoint:
-                missing.append("endpoint")
+                miss_parts.append(line("azure.status.part_endpoint", "endpoint"))
             if not self.openai_api_key:
-                missing.append("API key")
-            lines.append(f"✗ Azure OpenAI: Not configured (missing: {', '.join(missing)})")
-        
+                miss_parts.append(line("azure.status.part_api_key", "API key"))
+            missing = ", ".join(miss_parts)
+            lines.append(
+                line(
+                    "azure.status.openai_missing",
+                    "✗ Azure OpenAI: Not configured (missing: {missing})",
+                    missing=missing,
+                )
+            )
+
         if self.is_doc_intel_configured():
-            lines.append(f"✓ Document Intelligence: Configured ({self.doc_intel_endpoint})")
+            lines.append(
+                line(
+                    "azure.status.doc_intel_ok",
+                    "✓ Document Intelligence: Configured ({endpoint})",
+                    endpoint=self.doc_intel_endpoint,
+                )
+            )
         else:
-            missing = []
+            miss_parts = []
             if not self.doc_intel_endpoint:
-                missing.append("endpoint")
+                miss_parts.append(line("azure.status.part_endpoint", "endpoint"))
             if not self.doc_intel_api_key:
-                missing.append("API key")
-            lines.append(f"✗ Document Intelligence: Not configured (missing: {', '.join(missing)})")
-        
-        return '\n'.join(lines)
+                miss_parts.append(line("azure.status.part_api_key", "API key"))
+            missing = ", ".join(miss_parts)
+            lines.append(
+                line(
+                    "azure.status.doc_intel_missing",
+                    "✗ Document Intelligence: Not configured (missing: {missing})",
+                    missing=missing,
+                )
+            )
+
+        return "\n".join(lines)
 
 
 # Singleton instance for easy import

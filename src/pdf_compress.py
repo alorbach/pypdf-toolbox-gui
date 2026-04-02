@@ -13,12 +13,31 @@ import io
 import logging
 import os
 import re
+import sys
 import threading
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, scrolledtext
 
 import tkinter.ttk as ttk
+
+_SRC_DIR = Path(__file__).resolve().parent
+if str(_SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(_SRC_DIR))
+try:
+    from utils.i18n import init_tool_i18n, t
+except ImportError:
+    def init_tool_i18n(_script=None):
+        pass
+
+    def t(key, default=None, **kwargs):
+        s = default if default is not None else key
+        if kwargs:
+            try:
+                return s.format(**kwargs)
+            except (KeyError, ValueError):
+                return s
+        return s
 
 try:
     import fitz
@@ -207,11 +226,12 @@ def recompress_pdf_images(src: str, dest: str, scale: float, jpeg_quality: int) 
 
 class PDFCompressApp:
     def __init__(self):
+        init_tool_i18n(__file__)
         if DND_AVAILABLE:
             self.root = TkinterDnD.Tk()
         else:
             self.root = tk.Tk()
-        self.root.title("PDF / Image Recompress")
+        self.root.title(t("compress.window_title"))
         self.root.minsize(720, 520)
         self.root.configure(bg=UIColors.BG_SECONDARY)
 
@@ -237,7 +257,7 @@ class PDFCompressApp:
 
         tk.Label(
             main,
-            text="Shrink & recompress images",
+            text=t("compress.title"),
             font=UIFonts.TITLE,
             bg=UIColors.BG_SECONDARY,
             fg=UIColors.PRIMARY,
@@ -245,8 +265,7 @@ class PDFCompressApp:
 
         tk.Label(
             main,
-            text="PDFs: embedded images are resized (linear scale) and saved as JPEG. "
-            "Images: saved as compressed JPEG. Vectors and text in PDFs are unchanged.",
+            text=t("compress.subtitle"),
             font=UIFonts.SMALL,
             bg=UIColors.BG_SECONDARY,
             fg=UIColors.TEXT_SECONDARY,
@@ -265,11 +284,7 @@ class PDFCompressApp:
         drop.pack(fill=tk.X, pady=(0, UISpacing.MD))
         self.drop_frame = drop
         self._drop_widgets = []
-        msg = (
-            "Drag and drop PDF or image files here"
-            if DND_AVAILABLE
-            else "Use Add files to select PDF or images"
-        )
+        msg = t("compress.drop_dnd") if DND_AVAILABLE else t("compress.drop_no_dnd")
         la = tk.Label(
             drop,
             text=msg,
@@ -281,7 +296,7 @@ class PDFCompressApp:
         la.pack()
         lb = tk.Label(
             drop,
-            text="or click to add files",
+            text=t("compress.drop_sub"),
             font=UIFonts.SMALL,
             bg=UIColors.DROP_ZONE_BG,
             fg=UIColors.TEXT_MUTED,
@@ -294,13 +309,15 @@ class PDFCompressApp:
 
         row = tk.Frame(main, bg=UIColors.BG_SECONDARY)
         row.pack(fill=tk.X, pady=(0, UISpacing.SM))
-        create_rounded_button(row, "Add files…", self.add_files, style="primary").pack(
+        create_rounded_button(row, t("compress.add_files"), self.add_files, style="primary").pack(
             side=tk.LEFT, padx=(0, UISpacing.SM)
         )
-        create_rounded_button(row, "Select all", self.select_all_files, style="secondary").pack(
-            side=tk.LEFT, padx=(0, UISpacing.SM)
+        create_rounded_button(
+            row, t("compress.select_all"), self.select_all_files, style="secondary"
+        ).pack(side=tk.LEFT, padx=(0, UISpacing.SM))
+        create_rounded_button(row, t("compress.clear_list"), self.clear_files, style="danger").pack(
+            side=tk.LEFT
         )
-        create_rounded_button(row, "Clear list", self.clear_files, style="danger").pack(side=tk.LEFT)
 
         list_frame = tk.Frame(main, bg=UIColors.BG_PRIMARY, bd=1, relief=tk.SOLID)
         list_frame.pack(fill=tk.BOTH, expand=True, pady=(0, UISpacing.MD))
@@ -322,14 +339,20 @@ class PDFCompressApp:
         self.file_list.bind("<Control-a>", self._on_select_all_key)
         self.file_list.bind("<Control-A>", self._on_select_all_key)
 
-        opts = tk.LabelFrame(main, text=" Options ", font=UIFonts.HEADING, bg=UIColors.BG_PRIMARY, fg=UIColors.TEXT_PRIMARY)
+        opts = tk.LabelFrame(
+            main,
+            text=t("compress.options"),
+            font=UIFonts.HEADING,
+            bg=UIColors.BG_PRIMARY,
+            fg=UIColors.TEXT_PRIMARY,
+        )
         opts.pack(fill=tk.X, pady=(0, UISpacing.MD))
 
         sf = tk.Frame(opts, bg=UIColors.BG_PRIMARY)
         sf.pack(fill=tk.X, padx=UISpacing.MD, pady=UISpacing.SM)
         tk.Label(
             sf,
-            text="Image linear scale (% of original width/height, min 50%):",
+            text=t("compress.scale_label"),
             bg=UIColors.BG_PRIMARY,
             fg=UIColors.TEXT_PRIMARY,
             font=UIFonts.BODY,
@@ -352,7 +375,7 @@ class PDFCompressApp:
         qf.pack(fill=tk.X, padx=UISpacing.MD, pady=UISpacing.SM)
         tk.Label(
             qf,
-            text="JPEG quality (lower = smaller files):",
+            text=t("compress.quality_label"),
             bg=UIColors.BG_PRIMARY,
             fg=UIColors.TEXT_PRIMARY,
             font=UIFonts.BODY,
@@ -373,21 +396,30 @@ class PDFCompressApp:
 
         out_row = tk.Frame(main, bg=UIColors.BG_SECONDARY)
         out_row.pack(fill=tk.X, pady=(0, UISpacing.SM))
-        tk.Label(out_row, text="Output folder:", bg=UIColors.BG_SECONDARY, fg=UIColors.TEXT_PRIMARY).pack(
-            side=tk.LEFT
-        )
+        tk.Label(
+            out_row,
+            text=t("compress.output_folder"),
+            bg=UIColors.BG_SECONDARY,
+            fg=UIColors.TEXT_PRIMARY,
+        ).pack(side=tk.LEFT)
         self.out_entry = tk.Entry(out_row, textvariable=self.output_dir, width=60, font=UIFonts.SMALL)
         self.out_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=UISpacing.SM)
-        create_rounded_button(out_row, "Browse…", self.browse_output, style="primary").pack(side=tk.LEFT)
+        create_rounded_button(out_row, t("compress.browse"), self.browse_output, style="primary").pack(
+            side=tk.LEFT
+        )
 
         self.process_btn = create_rounded_button(
-            main, "Process all files", self.process_all, style="success"
+            main, t("compress.process_all"), self.process_all, style="success"
         )
         self.process_btn.pack(fill=tk.X, pady=(0, UISpacing.SM))
 
-        tk.Label(main, text="Log", font=UIFonts.HEADING, bg=UIColors.BG_SECONDARY, fg=UIColors.TEXT_PRIMARY).pack(
-            anchor=tk.W
-        )
+        tk.Label(
+            main,
+            text=t("compress.log"),
+            font=UIFonts.HEADING,
+            bg=UIColors.BG_SECONDARY,
+            fg=UIColors.TEXT_PRIMARY,
+        ).pack(anchor=tk.W)
         self.log = scrolledtext.ScrolledText(
             main,
             height=12,
@@ -441,12 +473,15 @@ class PDFCompressApp:
 
     def add_files(self):
         paths = filedialog.askopenfilenames(
-            title="Select PDF or image files",
+            title=t("compress.dialog_open_title"),
             filetypes=[
-                ("All supported", "*.pdf *.jpg *.jpeg *.png *.webp *.bmp *.tif *.tiff"),
-                ("PDF", "*.pdf"),
-                ("Images", "*.jpg *.jpeg *.png *.webp *.bmp *.tif *.tiff"),
-                ("All files", "*.*"),
+                (
+                    t("compress.ft_all_supported"),
+                    "*.pdf *.jpg *.jpeg *.png *.webp *.bmp *.tif *.tiff",
+                ),
+                (t("compress.ft_pdf"), "*.pdf"),
+                (t("compress.ft_images"), "*.jpg *.jpeg *.png *.webp *.bmp *.tif *.tiff"),
+                (t("compress.ft_all"), "*.*"),
             ],
         )
         self._add_paths(list(paths))
@@ -481,7 +516,7 @@ class PDFCompressApp:
         return "break"
 
     def browse_output(self):
-        d = filedialog.askdirectory(title="Output folder for compressed files")
+        d = filedialog.askdirectory(title=t("compress.dialog_out_title"))
         if d:
             self.output_dir.set(d)
 
@@ -489,15 +524,15 @@ class PDFCompressApp:
         if self._busy:
             return
         if not self.file_paths:
-            messagebox.showwarning("No files", "Add at least one PDF or image file.")
+            messagebox.showwarning(t("compress.warn_no_files_title"), t("compress.warn_no_files"))
             return
         out = self.output_dir.get().strip()
         if not out:
-            messagebox.showwarning("Output folder", "Choose an output folder.")
+            messagebox.showwarning(t("compress.warn_out_title"), t("compress.warn_out_missing"))
             return
         out_path = Path(out)
         if not out_path.is_dir():
-            messagebox.showerror("Output folder", "Output path is not a folder or does not exist.")
+            messagebox.showerror(t("compress.err_out_title"), t("compress.err_out_invalid"))
             return
 
         scale = self.scale_percent.get() / 100.0
@@ -514,7 +549,7 @@ class PDFCompressApp:
                     stem = sp.stem
                     if suffix == PDF_SUFFIX:
                         dest = str(out_path / f"{stem}_compressed.pdf")
-                        line = f"PDF: {sp.name} -> {Path(dest).name}"
+                        line = t("compress.log_pdf", src=sp.name, dest=Path(dest).name)
                         self.root.after(0, lambda m=line: self._log(m))
                         try:
                             rep, sk = recompress_pdf_images(src, dest, scale, quality)
@@ -522,14 +557,16 @@ class PDFCompressApp:
                             err = str(ex)
                             self.root.after(
                                 0,
-                                lambda n=sp.name, e=err: self._log(f"  ERROR {n}: {e}"),
+                                lambda n=sp.name, e=err: self._log(
+                                    t("compress.log_error", name=n, error=e)
+                                ),
                             )
                             continue
-                        line2 = f"  replaced {rep} image(s), skipped {sk}"
+                        line2 = t("compress.log_replaced", rep=rep, sk=sk)
                         self.root.after(0, lambda m=line2: self._log(m))
                     elif suffix in RASTER_SUFFIXES:
                         dest = str(out_path / f"{stem}_compressed.jpg")
-                        line = f"Image: {sp.name} -> {Path(dest).name}"
+                        line = t("compress.log_image", src=sp.name, dest=Path(dest).name)
                         self.root.after(0, lambda m=line: self._log(m))
                         try:
                             recompress_image_file(src, dest, scale, quality)
@@ -537,12 +574,14 @@ class PDFCompressApp:
                             err = str(ex)
                             self.root.after(
                                 0,
-                                lambda n=sp.name, e=err: self._log(f"  ERROR {n}: {e}"),
+                                lambda n=sp.name, e=err: self._log(
+                                    t("compress.log_error", name=n, error=e)
+                                ),
                             )
                             continue
-                        self.root.after(0, lambda: self._log("  done"))
+                        self.root.after(0, lambda: self._log(t("compress.log_done")))
                     else:
-                        line = f"Skip unsupported: {sp.name}"
+                        line = t("compress.log_skip", name=sp.name)
                         self.root.after(0, lambda m=line: self._log(m))
                 self.root.after(0, self._done_ok)
             except Exception as e:
@@ -555,14 +594,14 @@ class PDFCompressApp:
         self._busy = False
         self.process_btn.config(state=tk.NORMAL)
         self.root.config(cursor="")
-        self._log("Finished.")
-        messagebox.showinfo("Done", "Processing finished. See log for details.")
+        self._log(t("compress.log_finished"))
+        messagebox.showinfo(t("compress.done_title"), t("compress.done_message"))
 
     def _done_err(self, err: str):
         self._busy = False
         self.process_btn.config(state=tk.NORMAL)
         self.root.config(cursor="")
-        messagebox.showerror("Error", err)
+        messagebox.showerror(t("launcher.error_title"), err)
 
     def run(self):
         self.root.mainloop()

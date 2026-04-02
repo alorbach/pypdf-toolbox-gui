@@ -65,6 +65,39 @@ except ImportError as e:
     print(f"[WARNING] Azure config not available: {e}")
     AZURE_CONFIG_AVAILABLE = False
 
+# UI translations
+try:
+    try:
+        from src.utils.i18n import setup_i18n, t, save_ui_language, get_language
+    except ImportError:
+        try:
+            from utils.i18n import setup_i18n, t, save_ui_language, get_language
+        except ImportError:
+            _utils = Path(__file__).resolve().parent
+            if _utils.exists():
+                sys.path.insert(0, str(_utils))
+            from utils.i18n import setup_i18n, t, save_ui_language, get_language
+except ImportError as e:
+    print(f"[WARNING] i18n not available: {e}")
+
+    def setup_i18n(language=None, root_dir=None):
+        return "en"
+
+    def t(key, default=None, **kwargs):
+        s = default if default is not None else key
+        if kwargs:
+            try:
+                return s.format(**kwargs)
+            except (KeyError, ValueError):
+                return s
+        return s
+
+    def save_ui_language(lang):
+        pass
+
+    def get_language():
+        return "en"
+
 
 class PDFToolLauncher:
     """Main launcher window - slim bar at top of screen with expandable log panel"""
@@ -76,19 +109,21 @@ class PDFToolLauncher:
     
     def __init__(self, root):
         self.root = root
-        self.root.title("PyPDF Toolbox")
-        
+
         # Get root directory
         self.script_dir = Path(__file__).parent
         self.root_dir = self.script_dir.parent
-        
+
         # Check if running as executable (PyInstaller)
         self.is_executable = getattr(sys, 'frozen', False)
         if self.is_executable:
             # When running as EXE, the executable is the entry point
             self.exe_path = Path(sys.executable)
             self.root_dir = self.exe_path.parent
-        
+
+        setup_i18n(root_dir=self.root_dir)
+        self.root.title(t("launcher.window_title"))
+
         # Determine OS and launcher extension
         self.is_windows = platform.system() == "Windows"
         self.launcher_ext = ".bat" if self.is_windows else ".sh"
@@ -242,12 +277,12 @@ class PDFToolLauncher:
         left_frame = ttk.Frame(self.launcher_frame)
         left_frame.pack(side='left', fill='y')
         
-        title_label = ttk.Label(
+        self._title_label = ttk.Label(
             left_frame,
-            text="📄 PyPDF Toolbox",
+            text=t("launcher.title_label"),
             font=("Segoe UI", 14, "bold")
         )
-        title_label.pack(side='left', padx=(5, 20))
+        self._title_label.pack(side='left', padx=(5, 20))
         
         # Separator
         sep = ttk.Separator(self.launcher_frame, orient='vertical')
@@ -309,11 +344,27 @@ class PDFToolLauncher:
         # Right side: Control buttons
         right_frame = ttk.Frame(self.launcher_frame)
         right_frame.pack(side='right', fill='y')
-        
+
         # Separator
         sep2 = ttk.Separator(self.launcher_frame, orient='vertical')
         sep2.pack(side='right', fill='y', padx=5)
-        
+
+        # Language selector
+        lang_frame = ttk.Frame(right_frame)
+        lang_frame.pack(side='left', padx=(0, 4))
+        ttk.Label(lang_frame, text=t("launcher.language")).pack(side='left', padx=(0, 2))
+        self._lang_codes = ["en", "de"]
+        self.lang_combo = ttk.Combobox(
+            lang_frame,
+            values=[t("meta.lang_en"), t("meta.lang_de")],
+            state="readonly",
+            width=11,
+        )
+        cur = get_language()
+        self.lang_combo.current(self._lang_codes.index(cur) if cur in self._lang_codes else 0)
+        self.lang_combo.pack(side='left')
+        self.lang_combo.bind("<<ComboboxSelected>>", self._on_language_selected)
+
         # Refresh button
         refresh_btn = ttk.Button(
             right_frame,
@@ -322,40 +373,40 @@ class PDFToolLauncher:
             command=self.refresh_tools
         )
         refresh_btn.pack(side='left', padx=2)
-        
+
         # Close all tools button
-        close_all_btn = ttk.Button(
+        self._close_all_btn = ttk.Button(
             right_frame,
-            text="Close All",
+            text=t("launcher.close_all"),
             command=self.close_all_tools
         )
-        close_all_btn.pack(side='left', padx=2)
-        
+        self._close_all_btn.pack(side='left', padx=2)
+
         # Log panel toggle button
         self.log_toggle_btn = ttk.Button(
             right_frame,
-            text="📋 Log",
+            text=t("launcher.log_show"),
             command=self.toggle_log_panel,
-            width=8
+            width=11
         )
         self.log_toggle_btn.pack(side='left', padx=2)
-        
+
         # Azure AI Configuration button (always show, will handle error in dialog if needed)
-        azure_btn = ttk.Button(
+        self._azure_btn = ttk.Button(
             right_frame,
-            text="⚙️ AI Config",
+            text=t("launcher.ai_config"),
             command=self.show_azure_config,
-            width=8
+            width=14
         )
-        azure_btn.pack(side='left', padx=2)
-        
+        self._azure_btn.pack(side='left', padx=2)
+
         # Exit button
-        exit_btn = ttk.Button(
+        self._exit_btn = ttk.Button(
             right_frame,
-            text="Exit",
+            text=t("launcher.exit"),
             command=self.on_close
         )
-        exit_btn.pack(side='left', padx=2)
+        self._exit_btn.pack(side='left', padx=2)
         
         # Status indicator (small label)
         self.status_label = ttk.Label(
@@ -378,11 +429,16 @@ class PDFToolLauncher:
         log_header.pack(fill='x', pady=(0, 5))
         
         # Title label
-        ttk.Label(log_header, text="📋 Tool Output Log", font=("Segoe UI", 10, "bold")).pack(side='left')
-        
+        self._log_header_label = ttk.Label(
+            log_header, text=t("launcher.log_panel_title"), font=("Segoe UI", 10, "bold")
+        )
+        self._log_header_label.pack(side='left')
+
         # Clear log button (on the right side of header)
-        clear_btn = ttk.Button(log_header, text="Clear", command=self.clear_log, width=6)
-        clear_btn.pack(side='right', padx=2)
+        self._clear_log_btn = ttk.Button(
+            log_header, text=t("launcher.clear"), command=self.clear_log, width=8
+        )
+        self._clear_log_btn.pack(side='right', padx=2)
         
         # Log text widget (below the header/buttons) - wider for better readability
         self.log_text = scrolledtext.ScrolledText(
@@ -405,7 +461,44 @@ class PDFToolLauncher:
         self.log_text.tag_configure("error", foreground="#f14c4c")
         self.log_text.tag_configure("info", foreground="#3794ff")
         self.log_text.tag_configure("separator", foreground="#808080")
-    
+
+    def _display_tool_name(self, name):
+        """Localized tool label for toolbar; falls back to title-cased internal name."""
+        return t(f"tools.{name}", default=self._format_tool_name(name))
+
+    def _refresh_tools_status(self):
+        self.status_label.config(text=t("launcher.status_tools", n=len(self.launchers)))
+
+    def _on_language_selected(self, event=None):
+        idx = self.lang_combo.current()
+        if idx < 0 or idx >= len(self._lang_codes):
+            return
+        code = self._lang_codes[idx]
+        save_ui_language(code)
+        setup_i18n(language=code, root_dir=self.root_dir)
+        self.apply_launcher_language()
+
+    def apply_launcher_language(self):
+        """Re-apply strings after language change."""
+        self.root.title(t("launcher.window_title"))
+        self._title_label.config(text=t("launcher.title_label"))
+        self.lang_combo.configure(values=[t("meta.lang_en"), t("meta.lang_de")])
+        cur = get_language()
+        if cur in self._lang_codes:
+            self.lang_combo.current(self._lang_codes.index(cur))
+        self._close_all_btn.config(text=t("launcher.close_all"))
+        if self.log_panel_visible:
+            self.log_toggle_btn.config(text=t("launcher.log_hide"))
+        else:
+            self.log_toggle_btn.config(text=t("launcher.log_show"))
+        self._azure_btn.config(text=t("launcher.ai_config"))
+        self._exit_btn.config(text=t("launcher.exit"))
+        self._log_header_label.config(text=t("launcher.log_panel_title"))
+        self._clear_log_btn.config(text=t("launcher.clear"))
+        for L in self.launchers:
+            L["display_name"] = self._display_tool_name(L["name"])
+        self.populate_tools()
+
     def toggle_log_panel(self):
         """Toggle the log panel visibility"""
         # Get current position before resize
@@ -417,7 +510,7 @@ class PDFToolLauncher:
             # Hide log panel
             self.log_panel.pack_forget()
             self.log_panel_visible = False
-            self.log_toggle_btn.config(text="📋 Log")
+            self.log_toggle_btn.config(text=t("launcher.log_show"))
             
             # Resize launcher to slim height, restore original width
             # When log is hidden, window is just the launcher bar height
@@ -428,7 +521,7 @@ class PDFToolLauncher:
             # Pack after launcher_frame (which is already packed to 'top')
             self.log_panel.pack(side='top', fill='both', expand=True)
             self.log_panel_visible = True
-            self.log_toggle_btn.config(text="📋 Hide")
+            self.log_toggle_btn.config(text=t("launcher.log_hide"))
             
             # Resize launcher to accommodate log panel below
             # Use full width for log panel (wider log output), increase height for log panel
@@ -550,7 +643,7 @@ class PDFToolLauncher:
                 category = self._get_tool_category(launcher_name)
                 self.launchers.append({
                     "name": launcher_name,
-                    "display_name": self._format_tool_name(launcher_name),
+                    "display_name": self._display_tool_name(launcher_name),
                     "path": self.exe_path,  # Use executable path
                     "icon": self._get_tool_icon(launcher_name),
                     "category": category,
@@ -563,7 +656,7 @@ class PDFToolLauncher:
                 category = self._get_tool_category(name)
                 self.launchers.append({
                     "name": name,
-                    "display_name": self._format_tool_name(name),
+                    "display_name": self._display_tool_name(name),
                     "path": launcher_file,
                     "icon": self._get_tool_icon(name),
                     "category": category
@@ -619,22 +712,22 @@ class PDFToolLauncher:
         if not self.launchers:
             placeholder = ttk.Label(
                 self.buttons_frame,
-                text="No PDF tools found. Add launch_*.bat/.sh files to the root directory.",
+                text=t("launcher.no_tools"),
                 font=("Segoe UI", 9)
             )
             placeholder.pack(padx=10, pady=15)
             return
-        
+
         # Group tools by category
         current_category = None
         category_names = {
-            "split_merge": "Split & Merge",
-            "extract_analyze": "Extract & Analyze",
-            "convert_transform": "Convert & Transform",
-            "optimize": "Optimize",
-            "security": "Security",
-            "annotate": "Annotate",
-            "other": "Other"
+            "split_merge": t("categories.split_merge"),
+            "extract_analyze": t("categories.extract_analyze"),
+            "convert_transform": t("categories.convert_transform"),
+            "optimize": t("categories.optimize"),
+            "security": t("categories.security"),
+            "annotate": t("categories.annotate"),
+            "other": t("categories.other"),
         }
         
         for launcher in self.launchers:
@@ -647,7 +740,7 @@ class PDFToolLauncher:
                 # Add category label for new category
                 category_label = ttk.Label(
                     self.buttons_frame,
-                    text=category_names.get(launcher["category"], "Other"),
+                    text=category_names.get(launcher["category"], t("categories.other")),
                     font=("Segoe UI", 8, "bold"),
                     foreground="#64748b"
                 )
@@ -659,7 +752,7 @@ class PDFToolLauncher:
         # Update scrollregion after all buttons are added
         self.root.after_idle(lambda: self.tools_canvas.configure(scrollregion=self.tools_canvas.bbox('all')))
         
-        self.status_label.config(text=f"{len(self.launchers)} tools")
+        self._refresh_tools_status()
     
     def _create_category_separator(self):
         """Create a visual separator between tool categories"""
@@ -717,17 +810,19 @@ class PDFToolLauncher:
         display_name = launcher["display_name"]
         
         if not launcher_path.exists():
-            messagebox.showerror("Error", f"Tool launcher not found:\n{launcher_path}")
+            messagebox.showerror(
+                t("launcher.error_title"),
+                t("launcher.tool_not_found", path=launcher_path),
+            )
             return
-        
+
         # Check if tool is already running
         if tool_name in self.running_tools:
             process = self.running_tools[tool_name]
             if process.poll() is None:
                 response = messagebox.askyesno(
-                    "Tool Running",
-                    f"{display_name} is already running.\n\n"
-                    "Do you want to launch another instance?"
+                    t("launcher.tool_running_title"),
+                    t("launcher.tool_running_message", name=display_name),
                 )
                 if not response:
                     return
@@ -737,7 +832,8 @@ class PDFToolLauncher:
             env = os.environ.copy()
             env['PYTHONUNBUFFERED'] = '1'
             env['PYTHONIOENCODING'] = 'utf-8'
-            
+            env['PYPDF_LANG'] = get_language()
+
             # Pass tool window position via environment
             env['TOOL_WINDOW_X'] = str(self.tool_area_x)
             env['TOOL_WINDOW_Y'] = str(self.tool_area_y)
@@ -746,7 +842,7 @@ class PDFToolLauncher:
             
             # Log launch
             self.append_log(f"{'='*50}", tool_name)
-            self.append_log(f"Launching {display_name}...", tool_name)
+            self.append_log(t("log.launching", name=display_name), tool_name)
             
             # Check if running in executable mode
             if self.is_executable:
@@ -777,7 +873,7 @@ class PDFToolLauncher:
                     text=True,
                     bufsize=1
                 )
-                self.append_log(f"Started: {display_name} (via executable)", tool_name)
+                self.append_log(t("log.started_executable", name=display_name), tool_name)
             # Try to launch directly with Python (no console window)
             elif self.is_windows:
                 # Find the Python script for this tool
@@ -804,7 +900,7 @@ class PDFToolLauncher:
                         text=True,
                         bufsize=1
                     )
-                    self.append_log(f"Started: {tool_script.name}", tool_name)
+                    self.append_log(t("log.started_script", name=tool_script.name), tool_name)
                 else:
                     # Fallback: run through batch file
                     startupinfo = subprocess.STARTUPINFO()
@@ -823,7 +919,7 @@ class PDFToolLauncher:
                         text=True,
                         bufsize=1
                     )
-                    self.append_log(f"Started via batch: {launcher_path.name}", tool_name)
+                    self.append_log(t("log.started_batch", name=launcher_path.name), tool_name)
             else:
                 # Linux/Mac: try direct Python launch first
                 tool_script = self._get_tool_python_script(tool_name)
@@ -840,7 +936,7 @@ class PDFToolLauncher:
                         text=True,
                         bufsize=1
                     )
-                    self.append_log(f"Started: {tool_script.name}", tool_name)
+                    self.append_log(t("log.started_script", name=tool_script.name), tool_name)
                 else:
                     # Fallback: run through shell script
                     process = subprocess.Popen(
@@ -853,7 +949,7 @@ class PDFToolLauncher:
                         text=True,
                         bufsize=1
                     )
-                    self.append_log(f"Started via shell: {launcher_path.name}", tool_name)
+                    self.append_log(t("log.started_shell", name=launcher_path.name), tool_name)
             
             # Track running process
             self.running_tools[tool_name] = process
@@ -871,8 +967,11 @@ class PDFToolLauncher:
             self._flash_button(launcher)
             
         except Exception as e:
-            self.append_log(f"Failed to launch: {str(e)}", tool_name, is_error=True)
-            messagebox.showerror("Error", f"Failed to launch {display_name}:\n{str(e)}")
+            self.append_log(t("log.failed_launch", error=str(e)), tool_name, is_error=True)
+            messagebox.showerror(
+                t("launcher.error_title"),
+                t("launcher.launch_failed", name=display_name, error=str(e)),
+            )
     
     def _read_process_output(self, process, tool_name, display_name):
         """Read process output in a background thread"""
@@ -891,17 +990,22 @@ class PDFToolLauncher:
             
             # Process finished
             return_code = process.poll()
-            self.append_log(f"Process exited with code: {return_code}", tool_name, 
-                          is_error=(return_code != 0))
-            
+            self.append_log(
+                t("log.process_exit", code=return_code),
+                tool_name,
+                is_error=(return_code != 0),
+            )
+
         except Exception as e:
-            self.append_log(f"Error reading output: {str(e)}", tool_name, is_error=True)
+            self.append_log(t("log.error_read_output", error=str(e)), tool_name, is_error=True)
     
     def _flash_button(self, launcher):
         """Briefly highlight button to show tool was launched"""
         if 'button' in launcher:
-            self.status_label.config(text=f"Launched: {launcher['display_name']}")
-            self.root.after(2000, lambda: self.status_label.config(text=f"{len(self.launchers)} tools"))
+            self.status_label.config(
+                text=t("launcher.status_launched", name=launcher["display_name"])
+            )
+            self.root.after(2000, self._refresh_tools_status)
     
     def refresh_tools(self):
         """Refresh the tool list"""
@@ -940,9 +1044,11 @@ class PDFToolLauncher:
         for tool_name, process, pid in processes_to_kill:
             try:
                 process.terminate()
-                self.append_log(f"Terminating {tool_name} (PID {pid})...", tool_name)
+                self.append_log(t("log.terminating", name=tool_name, pid=pid), tool_name)
             except Exception as e:
-                self.append_log(f"Failed to terminate: {str(e)}", tool_name, is_error=True)
+                self.append_log(
+                    t("log.failed_terminate", error=str(e)), tool_name, is_error=True
+                )
         
         # Wait for graceful shutdown
         time.sleep(0.8)
@@ -954,9 +1060,11 @@ class PDFToolLauncher:
                 if process.poll() is None:  # Still running
                     if self.is_windows:
                         # On Windows, kill the process tree using taskkill
-                        self.append_log(f"Force killing {tool_name} and children (PID {pid})...", tool_name)
+                        self.append_log(
+                            t("log.force_killing", name=tool_name, pid=pid), tool_name
+                        )
                         if self._kill_process_tree_windows(pid):
-                            self.append_log(f"Killed {tool_name} via taskkill /T", tool_name)
+                            self.append_log(t("log.killed_taskkill", name=tool_name), tool_name)
                             closed_count += 1
                         else:
                             # Fallback: try process.kill()
@@ -971,15 +1079,19 @@ class PDFToolLauncher:
                                         timeout=2,
                                         creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
                                     )
-                                self.append_log(f"Killed {tool_name}", tool_name)
+                                self.append_log(t("log.killed", name=tool_name), tool_name)
                                 closed_count += 1
                             except Exception as e:
-                                self.append_log(f"Failed to kill {tool_name}: {str(e)}", tool_name, is_error=True)
+                                self.append_log(
+                                    t("log.failed_kill", name=tool_name, error=str(e)),
+                                    tool_name,
+                                    is_error=True,
+                                )
                     else:
                         # On Unix, kill() sends SIGKILL
                         process.kill()
                         time.sleep(0.2)
-                        self.append_log(f"Force killed {tool_name}", tool_name)
+                        self.append_log(t("log.force_killed", name=tool_name), tool_name)
                         closed_count += 1
                 else:
                     # Process already terminated
@@ -988,7 +1100,11 @@ class PDFToolLauncher:
                 # Process already gone
                 closed_count += 1
             except Exception as e:
-                self.append_log(f"Error killing {tool_name}: {str(e)}", tool_name, is_error=True)
+                self.append_log(
+                    t("log.error_killing", name=tool_name, error=str(e)),
+                    tool_name,
+                    is_error=True,
+                )
                 # Still try Windows taskkill as last resort
                 if self.is_windows:
                     try:
@@ -1002,8 +1118,8 @@ class PDFToolLauncher:
         if hasattr(self, 'output_threads'):
             self.output_threads.clear()
         
-        self.status_label.config(text=f"Closed {closed_count} tools")
-        self.root.after(2000, lambda: self.status_label.config(text=f"{len(self.launchers)} tools"))
+        self.status_label.config(text=t("launcher.status_closed", n=closed_count))
+        self.root.after(2000, self._refresh_tools_status)
     
     def check_dependencies(self):
         """Check for missing critical dependencies and offer to install them."""
@@ -1022,12 +1138,14 @@ class PDFToolLauncher:
             missing_deps.append("pyyaml")
         
         if missing_deps:
+            pip_deps = " ".join(missing_deps)
             response = messagebox.askyesno(
-                "Missing Dependencies",
-                f"The following required packages are missing:\n\n"
-                f"{', '.join(missing_deps)}\n\n"
-                f"Would you like to install them now?\n\n"
-                f"(This will run: pip install {' '.join(missing_deps)})"
+                t("launcher.missing_deps_title"),
+                t(
+                    "launcher.missing_deps_message",
+                    deps=", ".join(missing_deps),
+                    pip_deps=pip_deps,
+                ),
             )
             
             if response:
@@ -1039,7 +1157,7 @@ class PDFToolLauncher:
                     
                     # Install missing packages
                     for dep in missing_deps:
-                        self.append_log(f"Installing {dep}...", "Launcher")
+                        self.append_log(t("log.installing", dep=dep), "Launcher")
                         result = subprocess.run(
                             [str(python_exe), "-m", "pip", "install", dep],
                             cwd=str(self.root_dir),
@@ -1048,48 +1166,47 @@ class PDFToolLauncher:
                             timeout=60
                         )
                         if result.returncode == 0:
-                            self.append_log(f"✓ {dep} installed successfully", "Launcher")
+                            self.append_log(t("log.installed_ok", dep=dep), "Launcher")
                         else:
-                            self.append_log(f"✗ Failed to install {dep}: {result.stderr}", "Launcher", is_error=True)
-                    
+                            self.append_log(
+                                t("log.install_failed", dep=dep, stderr=result.stderr),
+                                "Launcher",
+                                is_error=True,
+                            )
+
                     messagebox.showinfo(
-                        "Installation Complete",
-                        "Dependencies installed. Please restart the application for changes to take effect."
+                        t("launcher.install_complete_title"),
+                        t("launcher.install_complete_message"),
                     )
                 except Exception as e:
                     messagebox.showerror(
-                        "Installation Failed",
-                        f"Failed to install dependencies:\n\n{str(e)}\n\n"
-                        f"Please run manually:\n"
-                        f"pip install {' '.join(missing_deps)}"
+                        t("launcher.install_failed_title"),
+                        t(
+                            "launcher.install_failed_message",
+                            error=str(e),
+                            pip_deps=" ".join(missing_deps),
+                        ),
                     )
     
     def show_azure_config(self):
         """Show Azure AI configuration dialog"""
         if not AZURE_CONFIG_AVAILABLE:
-            messagebox.showerror(
-                "Error",
-                "Azure configuration module not available.\n\n"
-                "Please ensure:\n"
-                "1. PyYAML is installed: pip install pyyaml\n"
-                "2. The utils/azure_config.py file exists"
-            )
+            messagebox.showerror(t("launcher.error_title"), t("launcher.azure_module_error"))
             return
-        
+
         try:
             # Get config instance
             config = get_azure_config(root_dir=self.root_dir)
         except Exception as e:
             messagebox.showerror(
-                "Error",
-                f"Failed to load Azure configuration:\n{str(e)}\n\n"
-                "Please check that the configuration module is available."
+                t("launcher.error_title"),
+                t("launcher.azure_load_error", error=str(e)),
             )
             return
-        
+
         # Create dialog window
         dialog = tk.Toplevel(self.root)
-        dialog.title("Azure AI Configuration")
+        dialog.title(t("launcher.azure_dialog_title"))
         dialog.geometry("600x650")
         dialog.transient(self.root)
         dialog.grab_set()
@@ -1108,40 +1225,40 @@ class PDFToolLauncher:
         # Title
         title_label = ttk.Label(
             main_frame,
-            text="Azure AI Configuration",
-            font=("Segoe UI", 14, "bold")
+            text=t("launcher.azure_dialog_heading"),
+            font=("Segoe UI", 14, "bold"),
         )
         title_label.pack(pady=(0, 10))
-        
+
         # Description
         desc_label = ttk.Label(
             main_frame,
-            text="Configure Azure AI services for all PDF tools.\nSettings are shared across all tools.",
+            text=t("launcher.azure_dialog_desc"),
             font=("Segoe UI", 9),
-            justify='center'
+            justify="center",
         )
         desc_label.pack(pady=(0, 15))
-        
+
         # Azure OpenAI section
-        openai_frame = ttk.LabelFrame(main_frame, text="Azure OpenAI", padding=10)
-        openai_frame.pack(fill='x', pady=5)
-        
-        ttk.Label(openai_frame, text="Endpoint:").grid(row=0, column=0, sticky='w', pady=2)
+        openai_frame = ttk.LabelFrame(main_frame, text=t("launcher.azure_openai_frame"), padding=10)
+        openai_frame.pack(fill="x", pady=5)
+
+        ttk.Label(openai_frame, text=t("launcher.label_endpoint")).grid(row=0, column=0, sticky="w", pady=2)
         openai_endpoint_var = tk.StringVar(value=config.openai_endpoint)
         openai_endpoint_entry = ttk.Entry(openai_frame, textvariable=openai_endpoint_var, width=50)
         openai_endpoint_entry.grid(row=0, column=1, sticky='ew', padx=5, pady=2)
         
-        ttk.Label(openai_frame, text="API Key:").grid(row=1, column=0, sticky='w', pady=2)
+        ttk.Label(openai_frame, text=t("launcher.label_api_key")).grid(row=1, column=0, sticky="w", pady=2)
         openai_key_var = tk.StringVar(value=config.openai_api_key)
         openai_key_entry = ttk.Entry(openai_frame, textvariable=openai_key_var, width=50, show='*')
         openai_key_entry.grid(row=1, column=1, sticky='ew', padx=5, pady=2)
         
-        ttk.Label(openai_frame, text="Deployment:").grid(row=2, column=0, sticky='w', pady=2)
+        ttk.Label(openai_frame, text=t("launcher.label_deployment")).grid(row=2, column=0, sticky="w", pady=2)
         openai_deploy_var = tk.StringVar(value=config.openai_deployment)
         openai_deploy_entry = ttk.Entry(openai_frame, textvariable=openai_deploy_var, width=50)
         openai_deploy_entry.grid(row=2, column=1, sticky='ew', padx=5, pady=2)
         
-        ttk.Label(openai_frame, text="API Version:").grid(row=3, column=0, sticky='w', pady=2)
+        ttk.Label(openai_frame, text=t("launcher.label_api_version")).grid(row=3, column=0, sticky="w", pady=2)
         openai_version_var = tk.StringVar(value=config.openai_api_version)
         openai_version_entry = ttk.Entry(openai_frame, textvariable=openai_version_var, width=50)
         openai_version_entry.grid(row=3, column=1, sticky='ew', padx=5, pady=2)
@@ -1149,15 +1266,21 @@ class PDFToolLauncher:
         openai_frame.columnconfigure(1, weight=1)
         
         # Azure Document Intelligence section
-        doc_intel_frame = ttk.LabelFrame(main_frame, text="Azure Document Intelligence", padding=10)
-        doc_intel_frame.pack(fill='x', pady=5)
-        
-        ttk.Label(doc_intel_frame, text="Endpoint:").grid(row=0, column=0, sticky='w', pady=2)
+        doc_intel_frame = ttk.LabelFrame(
+            main_frame, text=t("launcher.azure_doc_intel_frame"), padding=10
+        )
+        doc_intel_frame.pack(fill="x", pady=5)
+
+        ttk.Label(doc_intel_frame, text=t("launcher.label_endpoint")).grid(
+            row=0, column=0, sticky="w", pady=2
+        )
         doc_intel_endpoint_var = tk.StringVar(value=config.doc_intel_endpoint)
         doc_intel_endpoint_entry = ttk.Entry(doc_intel_frame, textvariable=doc_intel_endpoint_var, width=50)
         doc_intel_endpoint_entry.grid(row=0, column=1, sticky='ew', padx=5, pady=2)
         
-        ttk.Label(doc_intel_frame, text="API Key:").grid(row=1, column=0, sticky='w', pady=2)
+        ttk.Label(doc_intel_frame, text=t("launcher.label_api_key")).grid(
+            row=1, column=0, sticky="w", pady=2
+        )
         doc_intel_key_var = tk.StringVar(value=config.doc_intel_api_key)
         doc_intel_key_entry = ttk.Entry(doc_intel_frame, textvariable=doc_intel_key_var, width=50, show='*')
         doc_intel_key_entry.grid(row=1, column=1, sticky='ew', padx=5, pady=2)
@@ -1165,10 +1288,10 @@ class PDFToolLauncher:
         doc_intel_frame.columnconfigure(1, weight=1)
         
         # Status section
-        status_frame = ttk.LabelFrame(main_frame, text="Configuration Status", padding=10)
-        status_frame.pack(fill='x', pady=5)
-        
-        status_text = config.get_status_text()
+        status_frame = ttk.LabelFrame(main_frame, text=t("launcher.config_status_frame"), padding=10)
+        status_frame.pack(fill="x", pady=5)
+
+        status_text = config.get_status_text(translate=t)
         status_label = ttk.Label(
             status_frame,
             text=status_text,
@@ -1181,11 +1304,7 @@ class PDFToolLauncher:
         env_hint_frame = ttk.Frame(main_frame)
         env_hint_frame.pack(fill='x', pady=5)
         
-        hint_text = (
-            "💡 You can also set environment variables:\n"
-            "   AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_API_KEY, AZURE_OPENAI_DEPLOYMENT\n"
-            "   AZURE_DOC_INTEL_ENDPOINT, AZURE_DOC_INTEL_API_KEY"
-        )
+        hint_text = t("launcher.env_hint")
         hint_label = ttk.Label(
             env_hint_frame,
             text=hint_text,
@@ -1202,11 +1321,7 @@ class PDFToolLauncher:
         def test_connection():
             """Test Azure connections"""
             if not REQUESTS_AVAILABLE:
-                messagebox.showerror(
-                    "Error",
-                    "The 'requests' library is not installed.\n\n"
-                    "Install it with: pip install requests"
-                )
+                messagebox.showerror(t("launcher.error_title"), t("launcher.requests_missing"))
                 return
             
             # Update config with current values
@@ -1235,15 +1350,17 @@ class PDFToolLauncher:
                     
                     response = requests.get(test_url, headers=headers, timeout=10)
                     if response.status_code == 200:
-                        results.append("✓ Azure OpenAI: Connection successful")
+                        results.append(t("azure.test.openai_ok"))
                     else:
-                        results.append(f"✗ Azure OpenAI: Connection failed (HTTP {response.status_code})")
+                        results.append(
+                            t("azure.test.openai_fail_http", code=response.status_code)
+                        )
                 except requests.exceptions.RequestException as e:
-                    results.append(f"✗ Azure OpenAI: Connection failed ({str(e)})")
+                    results.append(t("azure.test.openai_fail", detail=str(e)))
                 except Exception as e:
-                    results.append(f"✗ Azure OpenAI: Error ({str(e)})")
+                    results.append(t("azure.test.openai_error", detail=str(e)))
             else:
-                results.append("○ Azure OpenAI: Not configured (missing endpoint or API key)")
+                results.append(t("azure.test.openai_not_configured"))
             
             # Test Azure Document Intelligence
             if config.doc_intel_endpoint and config.doc_intel_api_key:
@@ -1260,23 +1377,23 @@ class PDFToolLauncher:
                     
                     response = requests.get(test_url, headers=headers, timeout=10)
                     if response.status_code == 200:
-                        results.append("✓ Document Intelligence: Connection successful")
+                        results.append(t("azure.test.doc_ok"))
                     else:
-                        results.append(f"✗ Document Intelligence: Connection failed (HTTP {response.status_code})")
+                        results.append(t("azure.test.doc_fail_http", code=response.status_code))
                 except requests.exceptions.RequestException as e:
-                    results.append(f"✗ Document Intelligence: Connection failed ({str(e)})")
+                    results.append(t("azure.test.doc_fail", detail=str(e)))
                 except Exception as e:
-                    results.append(f"✗ Document Intelligence: Error ({str(e)})")
+                    results.append(t("azure.test.doc_error", detail=str(e)))
             else:
-                results.append("○ Document Intelligence: Not configured (missing endpoint or API key)")
-            
+                results.append(t("azure.test.doc_not_configured"))
+
             # Update status display
-            status_text = config.get_status_text()
+            status_text = config.get_status_text(translate=t)
             status_label.config(text=status_text)
-            
+
             # Show test results
-            result_message = "Connection Test Results:\n\n" + "\n".join(results)
-            messagebox.showinfo("Test Complete", result_message)
+            result_message = t("launcher.test_results_header") + "\n".join(results)
+            messagebox.showinfo(t("launcher.test_complete_title"), result_message)
         
         def save_config():
             """Save configuration"""
@@ -1294,12 +1411,8 @@ class PDFToolLauncher:
             if has_keys:
                 # Ask user if they want to save API keys to file
                 response = messagebox.askyesno(
-                    "Save API Keys?",
-                    "Do you want to save API keys to the configuration file?\n\n"
-                    "⚠️ Security Note: API keys will be stored in plain text.\n"
-                    "The config file is in .gitignore, but keep it secure.\n\n"
-                    "Yes = Save keys to file\n"
-                    "No = Save endpoints only (use environment variables for keys)"
+                    t("launcher.save_keys_title"),
+                    t("launcher.save_keys_message"),
                 )
                 save_keys = response
             else:
@@ -1322,38 +1435,34 @@ class PDFToolLauncher:
                     config.doc_intel_api_key = saved_doc_intel_key
                 
                 # Update status
-                status_text = config.get_status_text()
+                status_text = config.get_status_text(translate=t)
                 status_label.config(text=status_text)
-                
+
                 if save_keys:
                     messagebox.showinfo(
-                        "Saved",
-                        "Azure AI configuration saved successfully!\n\n"
-                        "⚠️ API keys are stored in the config file.\n"
-                        "Keep config/azure_ai.yaml secure!\n\n"
-                        "All tools will now use this configuration."
+                        t("launcher.saved_with_keys_title"),
+                        t("launcher.saved_with_keys_message"),
                     )
                 else:
                     messagebox.showinfo(
-                        "Saved",
-                        "Azure AI configuration saved successfully!\n\n"
-                        "Note: API keys were not saved to file.\n"
-                        "Use environment variables for API keys:\n"
-                        "• AZURE_OPENAI_API_KEY\n"
-                        "• AZURE_DOC_INTEL_API_KEY\n\n"
-                        "Or click Save again and choose to save keys."
+                        t("launcher.saved_no_keys_title"),
+                        t("launcher.saved_no_keys_message"),
                     )
             else:
-                messagebox.showerror("Error", "Failed to save configuration.")
-        
-        test_btn = ttk.Button(button_frame, text="Test Connection", command=test_connection)
-        test_btn.pack(side='left', padx=5)
-        
-        save_btn = ttk.Button(button_frame, text="Save", command=save_config)
-        save_btn.pack(side='left', padx=5)
-        
-        cancel_btn = ttk.Button(button_frame, text="Cancel", command=dialog.destroy)
-        cancel_btn.pack(side='right', padx=5)
+                messagebox.showerror(t("launcher.error_title"), t("launcher.save_failed"))
+
+        test_btn = ttk.Button(
+            button_frame, text=t("launcher.test_connection"), command=test_connection
+        )
+        test_btn.pack(side="left", padx=5)
+
+        save_btn = ttk.Button(button_frame, text=t("launcher.save"), command=save_config)
+        save_btn.pack(side="left", padx=5)
+
+        cancel_btn = ttk.Button(
+            button_frame, text=t("launcher.cancel"), command=dialog.destroy
+        )
+        cancel_btn.pack(side="right", padx=5)
     
     def on_close(self):
         """Handle window close - offer to close all tools"""
@@ -1362,11 +1471,8 @@ class PDFToolLauncher:
             
             if running_count > 0:
                 response = messagebox.askyesnocancel(
-                    "Exit PyPDF Toolbox",
-                    f"There are {running_count} tool(s) still running.\n\n"
-                    "Yes = Close all tools and exit\n"
-                    "No = Exit launcher only (keep tools open)\n"
-                    "Cancel = Don't exit"
+                    t("launcher.exit_title"),
+                    t("launcher.exit_message", n=running_count),
                 )
                 
                 if response is None:  # Cancel

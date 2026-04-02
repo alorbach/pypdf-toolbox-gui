@@ -1844,6 +1844,13 @@ def install_missing_dependencies():
 
 def main():
     """Main entry point."""
+    try:
+        from utils.i18n import init_tool_i18n
+    except ImportError:
+        from pathlib import Path
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from utils.i18n import init_tool_i18n
+    init_tool_i18n(__file__)
     print("[INFO] Starting PDF OCR Tool")
     
     # Try to install missing dependencies automatically

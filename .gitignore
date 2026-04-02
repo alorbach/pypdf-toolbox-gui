@@ -38,6 +38,10 @@ wheels/
 .DS_Store
 Thumbs.db
 
+# Local UI preferences (language, etc.)
+config/app_settings.json
+!config/app_settings.json.template
+
 # Configuration files with secrets
 # IMPORTANT: Never commit API keys!
 config/azure_ai.yaml

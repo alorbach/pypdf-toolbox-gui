@@ -14,6 +14,7 @@ a = Analysis(
     datas=[
         # Include config template if it exists (relative paths)
         ('config/azure_ai.yaml.template', 'config'),
+        ('locales', 'locales'),
     ],
     hiddenimports=[
         # Core libraries
@@ -62,6 +63,7 @@ a = Analysis(
         'pdf_image_print',
         'pdf_compress',
         'utils.azure_config',
+        'utils.i18n',
     ],
     hookspath=[],
     hooksconfig={},
