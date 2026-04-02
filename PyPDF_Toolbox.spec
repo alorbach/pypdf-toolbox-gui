@@ -60,6 +60,7 @@ a = Analysis(
         'pdf_manual_splitter',
         'pdf_md_converter',
         'pdf_image_print',
+        'pdf_compress',
         'utils.azure_config',
     ],
     hookspath=[],

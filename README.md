@@ -40,13 +40,13 @@ A collection of Python-based PDF utility tools with a unified graphical launcher
 - **PDF OCR**: Add searchable text layer to PDFs, convert images to searchable PDFs, support for multiple languages
 - **Markdown Converter**: Convert Markdown to PDF/DOCX with live HTML preview, 6 style presets, and multiple export options
 - **PDF Image Print**: Arrange images in front/back pairs for duplex printing, export to PDF or Word
+- **PDF / Image Recompress**: Scale down embedded PDF images (50–100%) and recompress as JPEG; batch-compress raster images
 
 ### Planned Tools
 
 - **Split PDF**: Split a PDF into individual pages or page ranges
 - **Merge PDF**: Combine multiple PDFs into one document
 - **Reorder Pages**: Rearrange pages within a PDF
-- **Compress**: Reduce PDF file size
 - **Rotate**: Rotate pages within a PDF
 - **Extract Pages**: Extract specific pages from a PDF
 - **Convert**: Convert between PDF and other formats

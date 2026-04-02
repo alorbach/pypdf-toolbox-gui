@@ -58,6 +58,23 @@ try:
 except ImportError:
     DND_AVAILABLE = False
 
+# Optional fallback for image → PDF bytes (PyMuPDF is preferred)
+try:
+    import img2pdf
+    IMG2PDF_AVAILABLE = True
+except ImportError:
+    IMG2PDF_AVAILABLE = False
+
+# PDF + raster inputs (PyMuPDF can open these for thumbnails)
+SUPPORTED_INPUT_SUFFIXES = frozenset({
+    ".pdf", ".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".webp",
+})
+RASTER_IMAGE_SUFFIXES = frozenset({
+    ".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".webp",
+})
+
+_SELECTION_CHIP_MIN_WIDTH = 220
+
 # Parse command line arguments
 parser = argparse.ArgumentParser(description='PDF Combiner - Visual page selection for combining PDFs')
 parser.add_argument('--debug', action='store_true', help='Enable debug output')
@@ -71,6 +88,38 @@ logging.basicConfig(
     datefmt='%Y-%m-%d %H:%M:%S'
 )
 logger = logging.getLogger(__name__)
+
+
+def _is_raster_image_path(path):
+    return Path(path).suffix.lower() in RASTER_IMAGE_SUFFIXES
+
+
+def raster_page_as_pdf_bytes(path, page_index):
+    """Build a single-page PDF (bytes) from a raster file at the given 0-based page index."""
+    src = fitz.open(path)
+    try:
+        if page_index < 0 or page_index >= src.page_count:
+            raise ValueError(f"page_index {page_index} out of range for {path}")
+        # Single-page images: convert_to_pdf (insert_pdf requires a PDF source)
+        if src.page_count == 1:
+            return src.convert_to_pdf()
+        new_doc = fitz.open()
+        try:
+            new_doc.insert_pdf(src, from_page=page_index, to_page=page_index)
+            return new_doc.tobytes()
+        finally:
+            new_doc.close()
+    except Exception as e:
+        logger.warning("PyMuPDF raster to PDF failed for %s: %s", path, e)
+        if page_index == 0 and IMG2PDF_AVAILABLE:
+            try:
+                return img2pdf.convert(path)
+            except Exception as e2:
+                raise RuntimeError(f"Could not embed image in PDF: {path}") from e2
+        raise RuntimeError(f"Could not embed image in PDF: {path}") from e
+    finally:
+        src.close()
+
 
 # Log startup information
 print(f"[INFO] Starting PDF Combiner")
@@ -318,7 +367,7 @@ class PDFCombinerApp:
         
         # Status bar
         self.status_var = tk.StringVar()
-        self.status_var.set("Ready - Load PDF files to begin")
+        self.status_var.set("Ready - Load PDF or image files to begin")
         status_bar = tk.Label(
             main_frame,
             textvariable=self.status_var,
@@ -374,19 +423,33 @@ class PDFCombinerApp:
         )
         selection_label.pack(anchor=tk.W, pady=(0, UISpacing.XS))
         
-        self.selection_text = tk.Text(
-            control_frame,
-            height=6,
-            wrap=tk.WORD,
-            font=UIFonts.SMALL,
+        sel_outer = tk.Frame(control_frame, bg=UIColors.BG_PRIMARY)
+        sel_outer.pack(fill=tk.BOTH, expand=True, pady=(UISpacing.XS, UISpacing.MD))
+        self.selection_canvas = tk.Canvas(
+            sel_outer,
+            height=140,
             bg=UIColors.BG_SECONDARY,
-            fg=UIColors.TEXT_PRIMARY,
-            relief="solid",
+            highlightthickness=0,
             bd=1,
-            padx=UISpacing.SM,
-            pady=UISpacing.SM
+            relief="solid"
         )
-        self.selection_text.pack(fill=tk.BOTH, expand=True, pady=(UISpacing.XS, UISpacing.MD))
+        sel_scrollbar = ttk.Scrollbar(sel_outer, orient="vertical", command=self.selection_canvas.yview)
+        self.selection_canvas.configure(yscrollcommand=sel_scrollbar.set)
+        self.selection_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        sel_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        self.selection_inner = tk.Frame(self.selection_canvas, bg=UIColors.BG_SECONDARY)
+        self._selection_canvas_window_id = self.selection_canvas.create_window(
+            (0, 0), window=self.selection_inner, anchor="nw"
+        )
+        self._selection_labels = []
+        self.selection_inner.bind(
+            "<Configure>",
+            lambda e: self.selection_canvas.configure(scrollregion=self.selection_canvas.bbox("all")),
+        )
+        self.selection_canvas.bind("<Configure>", self._on_selection_canvas_configure)
+        self.selection_canvas.bind("<MouseWheel>", self._on_selection_panel_mousewheel)
+        self.selection_canvas.bind("<Enter>", lambda e: self.selection_canvas.focus_set())
         
         # Preview size selection
         preview_frame = create_card_frame(control_frame, "  📐 Thumbnail Size  ", padding=True)
@@ -454,6 +517,8 @@ class PDFCombinerApp:
         )
         self.save_btn.pack(fill=tk.X)
         self.save_btn.config(state=tk.DISABLED)
+        
+        self.update_selection_display()
     
     def create_drop_zone(self, parent):
         """Create a visual drop zone for files."""
@@ -472,9 +537,9 @@ class PDFCombinerApp:
         )
         
         if DND_AVAILABLE:
-            main_text = "Drag and drop PDF files here"
+            main_text = "Drag and drop PDF or images here"
         else:
-            main_text = "Click to select PDF files"
+            main_text = "Click to select PDF or images"
         
         self.drop_label = tk.Label(
             drop_frame,
@@ -582,8 +647,7 @@ class PDFCombinerApp:
         else:
             files = data.split()
         
-        # Filter for PDF files only
-        return [f for f in files if f.lower().endswith('.pdf')]
+        return [f for f in files if Path(f).suffix.lower() in SUPPORTED_INPUT_SUFFIXES]
     
     def _on_mousewheel(self, event):
         """Enhanced mouse wheel scrolling."""
@@ -595,22 +659,86 @@ class PDFCombinerApp:
                 delta = -1 if event.num == 4 else 1
                 
             self.canvas.yview_scroll(delta, "units")
-        except:
+        except Exception:
             # Fallback for any mouse wheel issues
             self.canvas.yview_scroll(-1 if event.delta > 0 else 1, "units")
     
+    def _on_selection_panel_mousewheel(self, event):
+        """Scroll the selected-pages panel on Windows / macOS."""
+        if event.delta:
+            delta = int(-1 * (event.delta / 120))
+        else:
+            delta = -1 if event.num == 4 else 1
+        self.selection_canvas.yview_scroll(delta, "units")
+    
+    def _on_selection_canvas_configure(self, event):
+        """Keep inner frame width in sync and reflow selection chips."""
+        cw = max(event.width, 1)
+        self.selection_canvas.itemconfig(self._selection_canvas_window_id, width=cw)
+        self._reflow_selection_layout()
+    
+    def _reflow_selection_layout(self):
+        """Place selection labels in a responsive multi-column grid."""
+        labels = getattr(self, "_selection_labels", None)
+        if not labels:
+            return
+        for w in self.selection_inner.winfo_children():
+            w.grid_forget()
+        cw = self.selection_canvas.winfo_width()
+        if cw <= 1:
+            cw = _SELECTION_CHIP_MIN_WIDTH
+        cols = max(1, cw // _SELECTION_CHIP_MIN_WIDTH)
+        if len(labels) == 1 and not self.selected_pages:
+            labels[0].grid(row=0, column=0, sticky="w", padx=4, pady=2)
+        else:
+            for i, lbl in enumerate(labels):
+                lbl.grid(row=i // cols, column=i % cols, sticky="w", padx=4, pady=2)
+        self.selection_inner.update_idletasks()
+        self.selection_canvas.configure(scrollregion=self.selection_canvas.bbox("all"))
+    
     def load_files(self):
-        """Open file dialog to load PDF files."""
+        """Open file dialog to load PDF and image files."""
         file_paths = filedialog.askopenfilenames(
-            title="Select PDF files to combine",
-            filetypes=[("PDF files", "*.pdf"), ("All Files", "*.*")]
+            title="Select PDF or image files to combine",
+            filetypes=[
+                (
+                    "All supported",
+                    "*.pdf *.jpg *.jpeg *.png *.bmp *.tif *.tiff *.webp",
+                ),
+                ("PDF files", "*.pdf"),
+                (
+                    "Images",
+                    "*.jpg *.jpeg *.png *.bmp *.tif *.tiff *.webp",
+                ),
+                ("All files", "*.*"),
+            ],
         )
         
         if file_paths:
             self.load_files_from_list(list(file_paths))
     
     def load_files_from_list(self, file_paths):
-        """Load PDF files from a list of paths."""
+        """Load PDF and image files from a list of paths."""
+        if not file_paths:
+            return
+        
+        normalized = []
+        skipped_names = []
+        for p in file_paths:
+            suf = Path(p).suffix.lower()
+            if suf in SUPPORTED_INPUT_SUFFIXES:
+                normalized.append(p)
+            else:
+                skipped_names.append(os.path.basename(p))
+        if skipped_names:
+            preview = "\n".join(skipped_names[:12])
+            if len(skipped_names) > 12:
+                preview += "\n..."
+            messagebox.showwarning(
+                "Unsupported files skipped",
+                f"These files were skipped (unsupported type):\n{preview}",
+            )
+        file_paths = normalized
         if not file_paths:
             return
         
@@ -957,19 +1085,35 @@ class PDFCombinerApp:
         self.save_btn.config(state=tk.DISABLED)
     
     def update_selection_display(self):
-        """Update the selection text display."""
+        """Update the selected-pages panel with a reflowable multi-column layout."""
+        for w in self.selection_inner.winfo_children():
+            w.destroy()
+        self._selection_labels = []
         if not self.selected_pages:
-            self.selection_text.delete(1.0, tk.END)
-            self.selection_text.insert(tk.END, "No pages selected")
+            lbl = tk.Label(
+                self.selection_inner,
+                text="No pages selected",
+                font=UIFonts.SMALL,
+                bg=UIColors.BG_SECONDARY,
+                fg=UIColors.TEXT_MUTED,
+                anchor="w",
+            )
+            self._selection_labels.append(lbl)
+            self._reflow_selection_layout()
             return
-        
-        text = f"Selected {len(self.selected_pages)} pages:\n\n"
         for i, page_data in enumerate(self.selected_pages):
             filename = os.path.basename(page_data['file_path'])
-            text += f"{i+1}. {filename} - Page {page_data['page_index'] + 1}\n"
-        
-        self.selection_text.delete(1.0, tk.END)
-        self.selection_text.insert(tk.END, text)
+            line = f"{i + 1}. {filename} - Page {page_data['page_index'] + 1}"
+            lbl = tk.Label(
+                self.selection_inner,
+                text=line,
+                font=UIFonts.SMALL,
+                bg=UIColors.BG_SECONDARY,
+                fg=UIColors.TEXT_PRIMARY,
+                anchor="w",
+            )
+            self._selection_labels.append(lbl)
+        self._reflow_selection_layout()
     
     def save_combined_pdf(self):
         """Save the combined PDF with selected pages."""
@@ -1006,10 +1150,16 @@ class PDFCombinerApp:
             
             # Process selected pages in order
             for page_data in self.selected_pages:
-                # Open the PDF file and get the specific page
-                pdf_reader = PdfReader(page_data['file_path'])
-                page = pdf_reader.pages[page_data['page_index']]
+                path = page_data['file_path']
+                page_index = page_data['page_index']
                 rotation = page_data.get('rotation', 0)
+                if _is_raster_image_path(path):
+                    pdf_bytes = raster_page_as_pdf_bytes(path, page_index)
+                    pdf_reader = PdfReader(io.BytesIO(pdf_bytes))
+                    page = pdf_reader.pages[0]
+                else:
+                    pdf_reader = PdfReader(path)
+                    page = pdf_reader.pages[page_index]
                 if rotation:
                     page.rotate(rotation)
                 pdf_writer.add_page(page)

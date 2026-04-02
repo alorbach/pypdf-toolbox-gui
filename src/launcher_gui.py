@@ -543,6 +543,7 @@ class PDFToolLauncher:
                 "pdf_splitter": "pdf_splitter",  # Maps to pdf_manual_splitter module
                 "pdf_md_converter": "pdf_md_converter",
                 "pdf_image_print": "pdf_image_print",
+                "pdf_compress": "pdf_compress",
             }
             
             for launcher_name, tool_name in tool_mapping.items():
